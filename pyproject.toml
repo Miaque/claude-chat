@@ -1,0 +1,21 @@
+[project]
+name = "claude-chat"
+version = "0.1.0"
+description = "Add your description here"
+requires-python = ">=3.11"
+dependencies = [
+    "dramatiq[redis]==1.18.0",
+    "fastapi>=0.121.2",
+    "loguru>=0.7.3",
+    "pydantic~=2.11.4",
+    "pydantic-extra-types~=2.10.3",
+    "pydantic-settings~=2.11.0",
+    "uvicorn[standard]>=0.38.0",
+]
+
+[dependency-groups]
+dev = [
+    "pytest>=9.0.1",
+    "pytest-env>=1.2.0",
+    "ruff>=0.14.5",
+]

@@ -1,0 +1,32 @@
+{
+  "python.analysis.typeCheckingMode": "basic",
+  "cursorpyright.analysis.typeCheckingMode": "basic",
+  "terminal.integrated.env.windows": {
+    "PYTHONPATH": "${workspaceFolder}"
+  },
+  "python.analysis.extraPaths": ["${workspaceFolder}"],
+  "cursorpyright.analysis.extraPaths": ["${workspaceFolder}"],
+  "python.analysis.autoImportCompletions": true,
+  "cursorpyright.analysis.autoImportCompletions": true,
+  "python.analysis.indexing": true,
+  "python.analysis.packageIndexDepths": [
+    {
+      "name": "",
+      "depth": 20,
+      "includeAllSymbols": true
+    }
+  ],
+  "debugpy.debugJustMyCode": true,
+  "python.testing.pytestArgs": ["-s"],
+  "python.testing.unittestEnabled": false,
+  "python.testing.pytestEnabled": true,
+  "files.exclude": {
+    ".idea": true,
+    "**/__pycache__": true,
+    "**/.pytest_cache": true,
+    "logs": true,
+    "spider_wx_pc": true,
+    "frontend": true,
+    ".history": true
+  }
+}
