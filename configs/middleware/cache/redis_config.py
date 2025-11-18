@@ -111,3 +111,8 @@ class RedisConfig(BaseSettings):
         description="Enable client side cache in redis",
         default=False,
     )
+
+    REDIS_RETRY_ON_TIMEOUT: bool = Field(
+        description="Enable retry on timeout for Redis connections",
+        default=True,
+    )

@@ -1,0 +1,2 @@
+class DBConnection:
+    pass

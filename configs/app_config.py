@@ -1,7 +1,9 @@
 from pydantic_settings import SettingsConfigDict
 
+from configs.middleware import MiddlewareConfig
 
-class AppConfig:
+
+class AppConfig(MiddlewareConfig):
     model_config = SettingsConfigDict(
         # read from dotenv format config file
         env_file=".env",
