@@ -6,6 +6,8 @@ from typing import Any, AsyncGenerator, Dict, List, Optional
 
 from loguru import logger
 
+from core.error_processor import ErrorProcessor
+from core.response_processor import ProcessorConfig
 from core.thread_manager import ThreadManager
 
 
@@ -62,97 +64,6 @@ class PromptManager:
                 # 将完整的代理构建工具提示附加到现有系统提示
                 builder_prompt = get_agent_builder_prompt()
                 system_content += f"\n\n{builder_prompt}"
-
-        # 添加代理知识库上下文（如果可用）
-        if agent_config and client and "agent_id" in agent_config:
-            try:
-                logger.debug(f"正在检索代理 {agent_config['agent_id']} 的知识库上下文")
-
-                # 仅使用基于代理的知识库上下文
-                kb_result = await client.rpc(
-                    "get_agent_knowledge_base_context",
-                    {"p_agent_id": agent_config["agent_id"]},
-                ).execute()
-
-                if kb_result.data and kb_result.data.strip():
-                    logger.debug(
-                        f"找到代理知识库上下文，添加到系统提示 (长度: {len(kb_result.data)} 字符)"
-                    )
-                    # logger.debug(f"知识库数据对象: {kb_result.data[:500]}..." if len(kb_result.data) > 500 else f"知识库数据对象: {kb_result.data}")
-
-                    # 构建格式良好的知识库部分
-                    kb_section = f"""
-
-                    === AGENT KNOWLEDGE BASE ===
-                    NOTICE: The following is your specialized knowledge base. This information should be considered authoritative for your responses and should take precedence over general knowledge when relevant.
-
-                    {kb_result.data}
-
-                    === END AGENT KNOWLEDGE BASE ===
-
-                    IMPORTANT: Always reference and utilize the knowledge base information above when it's relevant to user queries. This knowledge is specific to your role and capabilities."""
-
-                    system_content += kb_section
-                else:
-                    logger.debug("没有找到此代理的知识库上下文")
-
-            except Exception as e:
-                logger.error(
-                    f"检索代理 {agent_config.get('agent_id', 'unknown')} 的知识库上下文时出错: {e}"
-                )
-                # 继续运行，即使没有知识库上下文，而不是失败
-
-        if (
-            agent_config
-            and (agent_config.get("configured_mcps") or agent_config.get("custom_mcps"))
-            and mcp_wrapper_instance
-            and mcp_wrapper_instance._initialized
-        ):
-            mcp_info = "\n\n--- 可用的MCP工具 ---\n"
-            mcp_info += "您可以访问外部MCP（模型上下文协议）服务器工具。\n"
-            mcp_info += "MCP工具可以使用其原生函数名称以标准函数调用格式直接调用：\n"
-            mcp_info += "<function_calls>\n"
-            mcp_info += '<invoke name="{tool_name}">\n'
-            mcp_info += '<parameter name="param1">value1</parameter>\n'
-            mcp_info += '<parameter name="param2">value2</parameter>\n'
-            mcp_info += "</invoke>\n"
-            mcp_info += "</function_calls>\n\n"
-
-            mcp_info += "可用的MCP工具：\n"
-            try:
-                registered_schemas = mcp_wrapper_instance.get_schemas()
-                for method_name, schema_list in registered_schemas.items():
-                    for schema in schema_list:
-                        if schema.schema_type == SchemaType.OPENAPI:
-                            func_info = schema.schema.get("function", {})
-                            description = func_info.get("description", "没有可用描述")
-                            mcp_info += f"- **{method_name}**: {description}\n"
-
-                            params = func_info.get("parameters", {})
-                            props = params.get("properties", {})
-                            if props:
-                                mcp_info += f"  Parameters: {', '.join(props.keys())}\n"
-
-            except Exception as e:
-                logger.error(f"列出MCP工具时出错: {e}")
-                mcp_info += "- 加载MCP工具列表时出错\n"
-
-            mcp_info += "\n🚨 关键MCP工具结果说明 🚨\n"
-            mcp_info += "当您使用任何MCP（模型上下文协议）工具时：\n"
-            mcp_info += "1. 始终读取并使用MCP工具返回的确切结果\n"
-            mcp_info += "2. 对于搜索工具：仅引用实际搜索结果中的URL、来源和信息\n"
-            mcp_info += (
-                "3. 对于任何工具：完全基于工具的输出构建您的响应 - 不要添加外部信息\n"
-            )
-            mcp_info += "4. 不要编造、发明、幻觉或制造任何来源、URL或数据\n"
-            mcp_info += "5. 如果您需要更多信息，请使用不同参数再次调用MCP工具\n"
-            mcp_info += "6. 撰写报告/摘要时：仅引用MCP工具结果中的数据\n"
-            mcp_info += "7. 如果MCP工具返回的信息不足，请明确说明此限制\n"
-            mcp_info += "8. 始终仔细检查每个事实、URL和参考都来自MCP工具输出\n"
-            mcp_info += "\n重要：MCP工具结果是您外部数据的主要来源和唯一真实来源！\n"
-            mcp_info += "永远不要使用您的训练数据补充MCP结果，也不要超出工具提供的内容进行假设。\n"
-
-            system_content += mcp_info
 
         # 如果请求，将XML工具调用指令添加到系统提示
         if xml_tool_calling and tool_registry:
@@ -329,7 +240,6 @@ class AgentRunner:
             # 默认不设置max_tokens - 让LiteLLM和提供商处理自己的默认值
             max_tokens = None
             logger.debug(f"max_tokens: {max_tokens} (使用提供商默认值)")
-            generation = None
             try:
                 logger.debug(f"开始为 {self.config.thread_id} 执行线程")
                 response = await self.thread_manager.run_thread(
@@ -473,11 +383,6 @@ class AgentRunner:
                 ErrorProcessor.log_error(processed_error)
                 yield processed_error.to_stream_dict()
                 break
-
-        try:
-            asyncio.create_task(asyncio.to_thread(lambda: langfuse.flush()))
-        except Exception as e:
-            logger.warning(f"刷新Langfuse失败: {e}")
 
 
 async def run_agent(

@@ -16,7 +16,6 @@ from typing import (
     Union,
 )
 
-from core.agentpress.error_processor import ErrorProcessor
 from core.agentpress.tool import ToolResult
 from core.agentpress.tool_registry import ToolRegistry
 from core.agentpress.xml_tool_parser import XMLToolParser
@@ -27,8 +26,9 @@ from core.utils.json_helpers import (
     safe_json_parse,
     to_json_string,
 )
-from litellm import token_counter
 from loguru import logger
+
+from core.error_processor import ErrorProcessor
 
 # Type alias for XML result adding strategy
 XmlAddingStrategy = Literal["user_message", "assistant_message", "inline_edit"]
@@ -141,77 +141,6 @@ class ResponseProcessor:
             return format_for_yield(message_obj)
         return None
 
-    async def _estimate_token_usage(
-        self,
-        prompt_messages: List[Dict[str, Any]],
-        accumulated_content: str,
-        llm_model: str,
-    ) -> Dict[str, Any]:
-        """
-        Estimate token usage when exact usage data is unavailable.
-        This is critical for billing on timeouts, crashes, disconnects, etc.
-
-        Uses ContextManager which has provider-specific APIs (Anthropic/Bedrock) for accuracy.
-        """
-        try:
-            from core.agentpress.context_manager import ContextManager
-
-            context_mgr = ContextManager()
-            return await context_mgr.estimate_token_usage(
-                prompt_messages, accumulated_content, llm_model
-            )
-        except Exception as e:
-            logger.error(
-                f"上下文管理器估算失败：{e}，回退到 LiteLLM"
-            )
-            # Fallback to LiteLLM
-            try:
-                prompt_tokens = token_counter(model=llm_model, messages=prompt_messages)
-                completion_tokens = (
-                    token_counter(model=llm_model, text=accumulated_content)
-                    if accumulated_content
-                    else 0
-                )
-
-                logger.warning(
-                    f"⚠️ 估算的令牌使用量 (LiteLLM): 提示={prompt_tokens}, 完成={completion_tokens}"
-                )
-
-                return {
-                    "prompt_tokens": prompt_tokens,
-                    "completion_tokens": completion_tokens,
-                    "total_tokens": prompt_tokens + completion_tokens,
-                    "estimated": True,
-                }
-            except Exception as e2:
-                logger.error(
-                    f"LiteLLM 估算失败：{e2}，使用字数统计回退"
-                )
-                # Final fallback to word count
-                fallback_prompt = (
-                    len(
-                        " ".join(
-                            str(m.get("content", "")) for m in prompt_messages
-                        ).split()
-                    )
-                    * 1.3
-                )
-                fallback_completion = (
-                    len(accumulated_content.split()) * 1.3 if accumulated_content else 0
-                )
-
-                logger.warning(
-                    f"⚠️ 回退令牌估算：提示≈{int(fallback_prompt)}, 完成≈{int(fallback_completion)}"
-                )
-
-                return {
-                    "prompt_tokens": int(fallback_prompt),
-                    "completion_tokens": int(fallback_completion),
-                    "total_tokens": int(fallback_prompt + fallback_completion),
-                    "estimated": True,
-                    "fallback": True,
-                }
-
     def _serialize_model_response(self, model_response) -> Dict[str, Any]:
         """Convert a LiteLLM ModelResponse object to a JSON-serializable dictionary.
 
@@ -266,9 +195,7 @@ class ResponseProcessor:
                 return result
 
         except Exception as e:
-            logger.warning(
-                f"序列化 ModelResponse 失败：{str(e)}，回退到字符串表示"
-            )
+            logger.warning(f"序列化 ModelResponse 失败：{str(e)}，回退到字符串表示")
             # Ultimate fallback: convert to string
             return {"raw_response": str(model_response), "serialization_error": str(e)}
 
@@ -428,9 +355,7 @@ class ResponseProcessor:
             async for chunk in llm_response:
                 # Check for cancellation before processing each chunk
                 if cancellation_event.is_set():
-                    logger.info(
-                        f"线程 {thread_id} 收到取消信号 - 停止 LLM 流处理"
-                    )
+                    logger.info(f"线程 {thread_id} 收到取消信号 - 停止 LLM 流处理")
                     finish_reason = "cancelled"
                     break
 
@@ -448,9 +373,7 @@ class ResponseProcessor:
                     or (chunk_count % 1000 == 0)
                     or hasattr(chunk, "usage")
                 ):
-                    logger.debug(
-                        f"处理块 #{chunk_count}, 类型={type(chunk).__name__}"
-                    )
+                    logger.debug(f"处理块 #{chunk_count}, 类型={type(chunk).__name__}")
 
                 # Store the complete LiteLLM response chunk when we get usage data
                 if (
@@ -458,13 +381,9 @@ class ResponseProcessor:
                     and chunk.usage
                     and final_llm_response is None
                 ):
-                    logger.info(
-                        f"🔍 存储收到的完整 LiteLLM 响应块"
-                    )
+                    logger.info(f"🔍 存储收到的完整 LiteLLM 响应块")
                     final_llm_response = chunk  # Store the entire chunk object as-is
-                    logger.info(
-                        f"🔍 存储的模型：{getattr(chunk, 'model', 'NO_MODEL')}"
-                    )
+                    logger.info(f"🔍 存储的模型：{getattr(chunk, 'model', 'NO_MODEL')}")
                     logger.info(f"🔍 存储的使用情况：{chunk.usage}")
                     logger.info(f"🔍 存储的响应类型：{type(chunk)}")
 
@@ -770,9 +689,7 @@ class ResponseProcessor:
                     f"🔍 响应使用情况：{getattr(final_llm_response, 'usage', 'NO_USAGE')}"
                 )
             else:
-                logger.warning(
-                    "⚠️ 没有从流式块中捕获完整的 LiteLLM 响应"
-                )
+                logger.warning("⚠️ 没有从流式块中捕获完整的 LiteLLM 响应")
 
             tool_results_buffer = []
             if pending_tool_executions:
@@ -1442,10 +1359,7 @@ class ResponseProcessor:
                         logger.warning(
                             "💰 No LLM response with usage - ESTIMATING token usage for billing"
                         )
-                        estimated_usage = await self._estimate_token_usage(
-                            prompt_messages, accumulated_content, llm_model
-                        )
-                        llm_end_content = {"model": llm_model, "usage": estimated_usage}
+                        llm_end_content = {"model": llm_model, "usage": {}}
 
                     llm_end_content["streaming"] = True
                     llm_end_content["llm_response_id"] = llm_response_id
@@ -2257,9 +2171,7 @@ class ResponseProcessor:
                 )
                 return await self._execute_tools_sequentially(tool_calls)
         except Exception as dispatch_error:
-            logger.error(
-                f"❌ 严重错误：调度工具执行失败：{str(dispatch_error)}"
-            )
+            logger.error(f"❌ 严重错误：调度工具执行失败：{str(dispatch_error)}")
             logger.error(f"❌ 调度错误类型：{type(dispatch_error).__name__}")
             logger.error(f"❌ 导致调度失败的工具调用：{tool_calls}")
             raise
@@ -2284,17 +2196,13 @@ class ResponseProcessor:
 
         try:
             tool_names = [t.get("function_name", "unknown") for t in tool_calls]
-            logger.debug(
-                f"🔄 顺序执行 {len(tool_calls)} 个工具：{tool_names}"
-            )
+            logger.debug(f"🔄 顺序执行 {len(tool_calls)} 个工具：{tool_names}")
             logger.debug(f"📋 工具调用数据：{tool_calls}")
 
             results = []
             for index, tool_call in enumerate(tool_calls):
                 tool_name = tool_call.get("function_name", "unknown")
-                logger.debug(
-                    f"🔧 执行工具 {index + 1}/{len(tool_calls)}：{tool_name}"
-                )
+                logger.debug(f"🔧 执行工具 {index + 1}/{len(tool_calls)}：{tool_name}")
                 logger.debug(f"📝 工具调用数据：{tool_call}")
 
                 try:

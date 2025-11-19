@@ -1,10 +1,13 @@
 import asyncio
 import json
+from email import message
 from typing import Any, AsyncGenerator, Dict, List, Literal, Optional, Type, Union, cast
 
 from loguru import logger
 
-from core.response_processor import ProcessorConfig
+from core.error_processor import ErrorProcessor
+from core.response_processor import ProcessorConfig, ResponseProcessor
+from core.services.llm import LLMError
 
 ToolChoice = Literal["auto", "required", "none"]
 
@@ -291,175 +294,12 @@ class ThreadManager:
             config = ProcessorConfig()  # Create new instance as fallback
 
         try:
-            # ===== CENTRAL CONFIGURATION =====
-            ENABLE_CONTEXT_MANAGER = True  # Set to False to disable context compression
-            ENABLE_PROMPT_CACHING = True  # Set to False to disable prompt caching
-            # ==================================
-
-            # Fast path: Check stored token count + new message tokens
-            skip_fetch = False
-            need_compression = False
             estimated_total_tokens = (
                 None  # Will be passed to response processor to avoid recalculation
             )
 
             # CRITICAL: Check if this is an auto-continue iteration FIRST (before any token counting)
             is_auto_continue = auto_continue_state.get("count", 0) > 0
-
-            if ENABLE_PROMPT_CACHING:
-                try:
-                    from core.ai_models import model_manager
-                    from litellm.utils import token_counter
-
-                    client = await self.db.client
-
-                    # Query last llm_response_end message from messages table (already stored there!)
-                    last_usage_result = (
-                        await client.table("messages")
-                        .select("content")
-                        .eq("thread_id", thread_id)
-                        .eq("type", "llm_response_end")
-                        .order("created_at", desc=True)
-                        .limit(1)
-                        .maybe_single()
-                        .execute()
-                    )
-
-                    if last_usage_result.data:
-                        llm_end_content = last_usage_result.data.get("content", {})
-                        if isinstance(llm_end_content, str):
-                            import json
-
-                            llm_end_content = json.loads(llm_end_content)
-
-                        usage = llm_end_content.get("usage", {})
-                        stored_model = llm_end_content.get("model", "")
-
-                        # Normalize model names for comparison (strip any provider prefix like anthropic/, openai/, google/, etc.)
-                        def normalize_model_name(model: str) -> str:
-                            """Strip provider prefix (e.g., 'anthropic/claude-3' -> 'claude-3')"""
-                            return model.split("/")[-1] if "/" in model else model
-
-                        normalized_stored = normalize_model_name(stored_model)
-                        normalized_current = normalize_model_name(llm_model)
-
-                        logger.debug(
-                            f"Fast check data - stored: {stored_model}, current: {llm_model}, match: {normalized_stored == normalized_current}"
-                        )
-
-                        # Only use fast path if model matches and we have stored tokens
-                        if usage and normalized_stored == normalized_current:
-                            # Use total_tokens (includes prev completion) for better accuracy
-                            last_total_tokens = int(usage.get("total_tokens", 0))
-
-                            # Add cache creation tokens for accurate count (AWS Bedrock quota calculation)
-                            cache_creation = int(
-                                usage.get("cache_creation_input_tokens", 0) or 0
-                            )
-                            if cache_creation > 0:
-                                last_total_tokens += cache_creation
-                                logger.debug(
-                                    f"Added {cache_creation} cache creation tokens to fast check total"
-                                )
-
-                            # Count tokens in new message (only for first turn, not auto-continue)
-                            new_msg_tokens = 0
-
-                            if is_auto_continue:
-                                # Auto-continue: No new user message, last_total already includes everything
-                                new_msg_tokens = 0
-                                logger.debug(
-                                    f"✅ Auto-continue detected (count={auto_continue_state['count']}), skipping new message token count"
-                                )
-                            elif latest_user_message_content:
-                                # First turn: Use passed content (avoids DB query)
-                                new_msg_tokens = token_counter(
-                                    model=llm_model,
-                                    messages=[
-                                        {
-                                            "role": "user",
-                                            "content": latest_user_message_content,
-                                        }
-                                    ],
-                                )
-                                logger.debug(
-                                    f"First turn: counting {new_msg_tokens} tokens from latest_user_message_content"
-                                )
-                            else:
-                                # First turn fallback: Query DB if content not provided
-                                latest_msg_result = (
-                                    await client.table("messages")
-                                    .select("content")
-                                    .eq("thread_id", thread_id)
-                                    .eq("type", "user")
-                                    .order("created_at", desc=True)
-                                    .limit(1)
-                                    .single()
-                                    .execute()
-                                )
-
-                                if latest_msg_result.data:
-                                    new_msg_content = latest_msg_result.data.get(
-                                        "content", ""
-                                    )
-                                    if new_msg_content:
-                                        new_msg_tokens = token_counter(
-                                            model=llm_model,
-                                            messages=[
-                                                {
-                                                    "role": "user",
-                                                    "content": new_msg_content,
-                                                }
-                                            ],
-                                        )
-                                        logger.debug(
-                                            f"First turn (DB fallback): counting {new_msg_tokens} tokens from DB query"
-                                        )
-
-                            estimated_total = last_total_tokens + new_msg_tokens
-                            estimated_total_tokens = (
-                                estimated_total  # Store for response processor
-                            )
-
-                            # Calculate threshold (same logic as context_manager.py)
-                            context_window = model_manager.get_context_window(llm_model)
-
-                            if context_window >= 1_000_000:
-                                max_tokens = context_window - 300_000
-                            elif context_window >= 400_000:
-                                max_tokens = context_window - 64_000
-                            elif context_window >= 200_000:
-                                max_tokens = context_window - 32_000
-                            elif context_window >= 100_000:
-                                max_tokens = context_window - 16_000
-                            else:
-                                max_tokens = int(context_window * 0.84)
-
-                            logger.info(
-                                f"⚡ Fast check: {last_total_tokens} + {new_msg_tokens} = {estimated_total} tokens (threshold: {max_tokens})"
-                            )
-
-                            if estimated_total < max_tokens:
-                                logger.info(f"✅ Under threshold, skipping compression")
-                                skip_fetch = True
-                            else:
-                                logger.info(
-                                    f"📊 Over threshold ({estimated_total} >= {max_tokens}), triggering compression"
-                                )
-                                need_compression = True
-                                # Will fetch and compress below
-                        else:
-                            logger.debug(
-                                f"Fast check skipped - usage: {bool(usage)}, model_match: {normalized_stored == normalized_current}"
-                            )
-                    else:
-                        logger.debug(
-                            f"Fast check skipped - no last llm_response_end message found"
-                        )
-                except Exception as e:
-                    logger.debug(
-                        f"Fast path check failed, falling back to full fetch: {e}"
-                    )
 
             # Always fetch messages (needed for LLM call)
             # Fast path just skips compression, not fetching!
@@ -474,106 +314,14 @@ class ThreadManager:
                 ]
                 messages.append({"role": "assistant", "content": partial_content})
 
-            # Apply context compression (only if needed based on fast path check)
-            if ENABLE_CONTEXT_MANAGER:
-                # Skip compression for first message (minimal context)
-                if len(messages) <= 2:
-                    logger.debug(
-                        f"First message: Skipping compression ({len(messages)} messages)"
-                    )
-                elif skip_fetch:
-                    # Fast path: We know we're under threshold, skip compression entirely
-                    logger.debug(
-                        f"Fast path: Skipping compression check (under threshold)"
-                    )
-                elif need_compression:
-                    # We know we're over threshold, compress now
-                    logger.info(
-                        f"Applying context compression on {len(messages)} messages"
-                    )
-                    context_manager = ContextManager()
-                    compressed_messages = await context_manager.compress_messages(
-                        messages,
-                        llm_model,
-                        max_tokens=llm_max_tokens,
-                        actual_total_tokens=estimated_total_tokens,  # Use estimated from fast check!
-                        system_prompt=system_prompt,
-                        thread_id=thread_id,
-                    )
-                    logger.debug(
-                        f"Context compression completed: {len(messages)} -> {len(compressed_messages)} messages"
-                    )
-                    messages = compressed_messages
-                else:
-                    # First turn or no fast path data: Run compression check
-                    logger.debug(
-                        f"Running compression check on {len(messages)} messages"
-                    )
-                    context_manager = ContextManager()
-                    compressed_messages = await context_manager.compress_messages(
-                        messages,
-                        llm_model,
-                        max_tokens=llm_max_tokens,
-                        actual_total_tokens=None,
-                        system_prompt=system_prompt,
-                        thread_id=thread_id,
-                    )
-                    messages = compressed_messages
-
-            # Check if cache needs rebuild due to compression
-            force_rebuild = False
-            if ENABLE_PROMPT_CACHING:
-                try:
-                    client = await self.db.client
-                    result = (
-                        await client.table("threads")
-                        .select("metadata")
-                        .eq("thread_id", thread_id)
-                        .single()
-                        .execute()
-                    )
-                    if result.data:
-                        metadata = result.data.get("metadata", {})
-                        if metadata.get("cache_needs_rebuild"):
-                            force_rebuild = True
-                            logger.info(
-                                "🔄 Rebuilding cache due to compression/model change"
-                            )
-                            # Clear the flag
-                            metadata["cache_needs_rebuild"] = False
-                            await (
-                                client.table("threads")
-                                .update({"metadata": metadata})
-                                .eq("thread_id", thread_id)
-                                .execute()
-                            )
-                except Exception as e:
-                    logger.debug(f"Failed to check cache_needs_rebuild flag: {e}")
-
-            # Apply caching
-            if ENABLE_PROMPT_CACHING and len(messages) > 2:
-                # Skip caching for first message (minimal context)
-                prepared_messages = await apply_anthropic_caching_strategy(
-                    system_prompt,
-                    messages,
-                    llm_model,
-                    thread_id=thread_id,
-                    force_recalc=force_rebuild,
-                )
-                prepared_messages = validate_cache_blocks(prepared_messages, llm_model)
-            else:
-                if ENABLE_PROMPT_CACHING and len(messages) <= 2:
-                    logger.debug(
-                        f"First message: Skipping caching and validation ({len(messages)} messages)"
-                    )
-                prepared_messages = [system_prompt] + messages
-
             # Get tool schemas for LLM API call (after compression)
             openapi_tool_schemas = (
                 self.tool_registry.get_openapi_schemas()
                 if config.native_tool_calling
                 else None
             )
+
+            prepared_messages = messages
 
             # Note: We don't log token count here because cached blocks give inaccurate counts
             # The LLM's usage.prompt_tokens (reported after the call) is the accurate source of truth
@@ -596,12 +344,6 @@ class ThreadManager:
             # Check for error response
             if isinstance(llm_response, dict) and llm_response.get("status") == "error":
                 return llm_response
-
-            # Process response - ensure config is ProcessorConfig object
-            # logger.debug(f"Config type before response processing: {type(config)}")
-            # if not isinstance(config, ProcessorConfig):
-            #     logger.error(f"Config is not ProcessorConfig! Type: {type(config)}, Value: {config}")
-            #     config = ProcessorConfig()  # Fallback
 
             if stream and hasattr(llm_response, "__aiter__"):
                 return self.response_processor.process_streaming_response(
@@ -735,18 +477,12 @@ class ThreadManager:
                     break
 
             except Exception as e:
-                if "AnthropicException - Overloaded" in str(e):
-                    logger.error(f"Anthropic overloaded, falling back to OpenRouter")
-                    llm_model = f"openrouter/{llm_model.replace('-20250514', '')}"
-                    auto_continue_state["active"] = True
-                    continue
-                else:
-                    processed_error = ErrorProcessor.process_system_error(
-                        e, context={"thread_id": thread_id}
-                    )
-                    ErrorProcessor.log_error(processed_error)
-                    yield processed_error.to_stream_dict()
-                    return
+                processed_error = ErrorProcessor.process_system_error(
+                    e, context={"thread_id": thread_id}
+                )
+                ErrorProcessor.log_error(processed_error)
+                yield processed_error.to_stream_dict()
+                return
 
         # Handle max iterations reached
         if (
