@@ -2307,29 +2307,29 @@ class ResponseProcessor:
                     # Validate result
                     if not isinstance(result, ToolResult):
                         logger.error(
-                            f"❌ Tool {tool_name} returned invalid result type: {type(result)}"
+                            f"❌ 工具 {tool_name} 返回了无效的结果类型：{type(result)}"
                         )
                         result = ToolResult(
                             success=False,
-                            output=f"Invalid result type from tool: {type(result)}",
+                            output=f"工具返回了无效的结果类型：{type(result)}",
                         )
 
                     results.append((tool_call, result))
                     logger.debug(
-                        f"✅ Completed tool {tool_name} with success={result.success if hasattr(result, 'success') else False}"
+                        f"✅ 工具 {tool_name} 完成，成功={result.success if hasattr(result, 'success') else False}"
                     )
 
                     # Check if this is a terminating tool (ask or complete)
                     if tool_name in ["ask", "complete"]:
                         logger.debug(
-                            f"🛑 TERMINATING TOOL '{tool_name}' executed. Stopping further tool execution."
+                            f"🛑 终止工具 '{tool_name}' 已执行。停止进一步的工具执行。"
                         )
                         break  # Stop executing remaining tools
 
                 except Exception as e:
-                    logger.error(f"❌ ERROR executing tool {tool_name}: {str(e)}")
-                    logger.error(f"❌ Error type: {type(e).__name__}")
-                    logger.error(f"❌ Tool call that failed: {tool_call}")
+                    logger.error(f"❌ 执行工具 {tool_name} 时出错：{str(e)}")
+                    logger.error(f"❌ 错误类型：{type(e).__name__}")
+                    logger.error(f"❌ 失败的工具调用：{tool_call}")
 
                     # Create error result safely
                     try:
