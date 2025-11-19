@@ -31,6 +31,5 @@
     "spider_wx_pc": true,
     "frontend": true,
     ".history": true
-  },
-  "python.languageServer": "None"
+  }
 }

@@ -1,0 +1,506 @@
+import asyncio
+import datetime
+import json
+from dataclasses import dataclass
+from typing import Any, AsyncGenerator, Dict, List, Optional
+
+from loguru import logger
+
+from core.thread_manager import ThreadManager
+
+
+@dataclass
+class AgentConfig:
+    thread_id: str
+    project_id: str
+    native_max_auto_continues: int = 25
+    max_iterations: int = 100
+    model_name: str = "glm-4.6"
+    agent_config: Optional[dict] = None
+
+
+class PromptManager:
+    @staticmethod
+    async def build_system_prompt(
+        model_name: str,
+        agent_config: Optional[dict],
+        thread_id: str,
+        mcp_wrapper_instance: Optional[MCPToolWrapper],
+        client=None,
+        tool_registry=None,
+        xml_tool_calling: bool = True,
+        user_id: Optional[str] = None,
+    ) -> dict:
+        default_system_content = get_system_prompt()
+
+        # if "anthropic" not in model_name.lower():
+        #     sample_response_path = os.path.join(os.path.dirname(__file__), 'prompts/samples/1.txt')
+        #     with open(sample_response_path, 'r') as file:
+        #         sample_response = file.read()
+        #     default_system_content = default_system_content + "\n\n <sample_assistant_response>" + sample_response + "</sample_assistant_response>"
+
+        # 从代理的正常系统提示或默认提示开始
+        if agent_config and agent_config.get("system_prompt"):
+            system_content = agent_config["system_prompt"].strip()
+        else:
+            system_content = default_system_content
+
+        # 检查代理是否启用了构建工具 - 附加完整的构建工具提示
+        if agent_config:
+            agentpress_tools = agent_config.get("agentpress_tools", {})
+            has_builder_tools = any(
+                agentpress_tools.get(tool, False)
+                for tool in [
+                    "agent_config_tool",
+                    "mcp_search_tool",
+                    "credential_profile_tool",
+                    "trigger_tool",
+                ]
+            )
+
+            if has_builder_tools:
+                # 将完整的代理构建工具提示附加到现有系统提示
+                builder_prompt = get_agent_builder_prompt()
+                system_content += f"\n\n{builder_prompt}"
+
+        # 添加代理知识库上下文（如果可用）
+        if agent_config and client and "agent_id" in agent_config:
+            try:
+                logger.debug(f"正在检索代理 {agent_config['agent_id']} 的知识库上下文")
+
+                # 仅使用基于代理的知识库上下文
+                kb_result = await client.rpc(
+                    "get_agent_knowledge_base_context",
+                    {"p_agent_id": agent_config["agent_id"]},
+                ).execute()
+
+                if kb_result.data and kb_result.data.strip():
+                    logger.debug(
+                        f"找到代理知识库上下文，添加到系统提示 (长度: {len(kb_result.data)} 字符)"
+                    )
+                    # logger.debug(f"知识库数据对象: {kb_result.data[:500]}..." if len(kb_result.data) > 500 else f"知识库数据对象: {kb_result.data}")
+
+                    # 构建格式良好的知识库部分
+                    kb_section = f"""
+
+                    === AGENT KNOWLEDGE BASE ===
+                    NOTICE: The following is your specialized knowledge base. This information should be considered authoritative for your responses and should take precedence over general knowledge when relevant.
+
+                    {kb_result.data}
+
+                    === END AGENT KNOWLEDGE BASE ===
+
+                    IMPORTANT: Always reference and utilize the knowledge base information above when it's relevant to user queries. This knowledge is specific to your role and capabilities."""
+
+                    system_content += kb_section
+                else:
+                    logger.debug("没有找到此代理的知识库上下文")
+
+            except Exception as e:
+                logger.error(
+                    f"检索代理 {agent_config.get('agent_id', 'unknown')} 的知识库上下文时出错: {e}"
+                )
+                # 继续运行，即使没有知识库上下文，而不是失败
+
+        if (
+            agent_config
+            and (agent_config.get("configured_mcps") or agent_config.get("custom_mcps"))
+            and mcp_wrapper_instance
+            and mcp_wrapper_instance._initialized
+        ):
+            mcp_info = "\n\n--- 可用的MCP工具 ---\n"
+            mcp_info += "您可以访问外部MCP（模型上下文协议）服务器工具。\n"
+            mcp_info += "MCP工具可以使用其原生函数名称以标准函数调用格式直接调用：\n"
+            mcp_info += "<function_calls>\n"
+            mcp_info += '<invoke name="{tool_name}">\n'
+            mcp_info += '<parameter name="param1">value1</parameter>\n'
+            mcp_info += '<parameter name="param2">value2</parameter>\n'
+            mcp_info += "</invoke>\n"
+            mcp_info += "</function_calls>\n\n"
+
+            mcp_info += "可用的MCP工具：\n"
+            try:
+                registered_schemas = mcp_wrapper_instance.get_schemas()
+                for method_name, schema_list in registered_schemas.items():
+                    for schema in schema_list:
+                        if schema.schema_type == SchemaType.OPENAPI:
+                            func_info = schema.schema.get("function", {})
+                            description = func_info.get("description", "没有可用描述")
+                            mcp_info += f"- **{method_name}**: {description}\n"
+
+                            params = func_info.get("parameters", {})
+                            props = params.get("properties", {})
+                            if props:
+                                mcp_info += f"  Parameters: {', '.join(props.keys())}\n"
+
+            except Exception as e:
+                logger.error(f"列出MCP工具时出错: {e}")
+                mcp_info += "- 加载MCP工具列表时出错\n"
+
+            mcp_info += "\n🚨 关键MCP工具结果说明 🚨\n"
+            mcp_info += "当您使用任何MCP（模型上下文协议）工具时：\n"
+            mcp_info += "1. 始终读取并使用MCP工具返回的确切结果\n"
+            mcp_info += "2. 对于搜索工具：仅引用实际搜索结果中的URL、来源和信息\n"
+            mcp_info += (
+                "3. 对于任何工具：完全基于工具的输出构建您的响应 - 不要添加外部信息\n"
+            )
+            mcp_info += "4. 不要编造、发明、幻觉或制造任何来源、URL或数据\n"
+            mcp_info += "5. 如果您需要更多信息，请使用不同参数再次调用MCP工具\n"
+            mcp_info += "6. 撰写报告/摘要时：仅引用MCP工具结果中的数据\n"
+            mcp_info += "7. 如果MCP工具返回的信息不足，请明确说明此限制\n"
+            mcp_info += "8. 始终仔细检查每个事实、URL和参考都来自MCP工具输出\n"
+            mcp_info += "\n重要：MCP工具结果是您外部数据的主要来源和唯一真实来源！\n"
+            mcp_info += "永远不要使用您的训练数据补充MCP结果，也不要超出工具提供的内容进行假设。\n"
+
+            system_content += mcp_info
+
+        # 如果请求，将XML工具调用指令添加到系统提示
+        if xml_tool_calling and tool_registry:
+            openapi_schemas = tool_registry.get_openapi_schemas()
+
+            if openapi_schemas:
+                # 将模式转换为JSON字符串
+                schemas_json = json.dumps(openapi_schemas, indent=2)
+
+                examples_content = f"""
+
+在此环境中，您可以访问一组工具，可用于回答用户的问题。
+
+您可以通过编写<function_calls>块来调用函数，如下所示，作为您对用户回复的一部分：
+
+<function_calls>
+<invoke name="function_name">
+<parameter name="param_name">param_value</parameter>
+...
+</invoke>
+</function_calls>
+
+字符串和标量参数应按原样指定，而列表和对象应使用JSON格式。
+
+以下是JSON Schema格式中可用的函数：
+
+```json
+{schemas_json}
+```
+
+使用工具时：
+- 使用上面JSON模式中的确切函数名称
+- 包含模式中指定的所有必需参数
+- 在参数标签内将复杂数据（对象、数组）格式化为JSON字符串
+- 布尔值应为"true"或"false"（小写）
+"""
+
+                system_content += examples_content
+                logger.debug("已将XML工具示例附加到系统提示中")
+
+        now = datetime.datetime.now(datetime.timezone.utc)
+        datetime_info = f"\n\n=== 当前日期/时间信息 ===\n"
+        datetime_info += f"今天的日期: {now.strftime('%A, %B %d, %Y')}\n"
+        datetime_info += f"当前年份: {now.strftime('%Y')}\n"
+        datetime_info += f"当前月份: {now.strftime('%B')}\n"
+        datetime_info += f"当前日期: {now.strftime('%A')}\n"
+        datetime_info += (
+            "将此信息用于任何时间敏感的任务、研究，或需要当前日期/时间上下文时。\n"
+        )
+
+        system_content += datetime_info
+
+        # 如果提供了user_id，添加用户地区上下文
+        if user_id and client:
+            try:
+                from core.utils.user_locale import (
+                    get_locale_context_prompt,
+                    get_user_locale,
+                )
+
+                locale = await get_user_locale(user_id, client)
+                locale_prompt = get_locale_context_prompt(locale)
+                system_content += f"\n\n{locale_prompt}\n"
+                logger.debug(
+                    f"为用户 {user_id} 添加了地区上下文 ({locale}) 到系统提示中"
+                )
+            except Exception as e:
+                logger.warning(f"向系统提示添加地区上下文失败: {e}")
+
+        system_message = {"role": "system", "content": system_content}
+        return system_message
+
+
+class AgentRunner:
+    def __init__(self, config: AgentConfig):
+        self.config = config
+
+    async def setup(self):
+        self.thread_manager = ThreadManager(agent_config=self.config.agent_config)
+
+        self.client = await self.thread_manager.db.client
+
+        response = (
+            await self.client.table("threads")
+            .select("account_id")
+            .eq("thread_id", self.config.thread_id)
+            .execute()
+        )
+
+        if not response.data or len(response.data) == 0:
+            raise ValueError(f"未找到线程 {self.config.thread_id}")
+
+        self.account_id = response.data[0].get("account_id")
+
+        if not self.account_id:
+            raise ValueError(f"线程 {self.config.thread_id} 没有关联的账户")
+
+        project = (
+            await self.client.table("projects")
+            .select("*")
+            .eq("project_id", self.config.project_id)
+            .execute()
+        )
+        if not project.data or len(project.data) == 0:
+            raise ValueError(f"未找到项目 {self.config.project_id}")
+
+        project_data = project.data[0]
+        sandbox_info = project_data.get("sandbox", {})
+        if not sandbox_info.get("id"):
+            logger.debug(
+                f"未找到项目 {self.config.project_id} 的沙盒；将在需要时延迟创建"
+            )
+
+    async def run(
+        self, cancellation_event: Optional[asyncio.Event] = None
+    ) -> AsyncGenerator[Dict[str, Any], None]:
+        await self.setup()
+
+        system_message = await PromptManager.build_system_prompt(
+            self.config.model_name,
+            self.config.agent_config,
+            self.config.thread_id,
+            mcp_wrapper_instance,
+            self.client,
+            tool_registry=self.thread_manager.tool_registry,
+            xml_tool_calling=True,
+            user_id=self.account_id,
+        )
+        logger.info(
+            f"📝 系统消息构建完成: {len(str(system_message.get('content', '')))} 字符"
+        )
+        logger.debug(f"收到 model_name: {self.config.model_name}")
+        iteration_count = 0
+        continue_execution = True
+
+        latest_user_message = (
+            await self.client.table("messages")
+            .select("*")
+            .eq("thread_id", self.config.thread_id)
+            .eq("type", "user")
+            .order("created_at", desc=True)
+            .limit(1)
+            .execute()
+        )
+        latest_user_message_content = None
+        if latest_user_message.data and len(latest_user_message.data) > 0:
+            data = latest_user_message.data[0]["content"]
+            if isinstance(data, str):
+                data = json.loads(data)
+            # 提取内容用于快速路径优化
+            latest_user_message_content = (
+                data.get("content") if isinstance(data, dict) else str(data)
+            )
+
+        while continue_execution and iteration_count < self.config.max_iterations:
+            iteration_count += 1
+
+            latest_message = (
+                await self.client.table("messages")
+                .select("*")
+                .eq("thread_id", self.config.thread_id)
+                .in_("type", ["assistant", "tool", "user"])
+                .order("created_at", desc=True)
+                .limit(1)
+                .execute()
+            )
+            if latest_message.data and len(latest_message.data) > 0:
+                message_type = latest_message.data[0].get("type")
+                if message_type == "assistant":
+                    continue_execution = False
+                    break
+
+            temporary_message = None
+            # 默认不设置max_tokens - 让LiteLLM和提供商处理自己的默认值
+            max_tokens = None
+            logger.debug(f"max_tokens: {max_tokens} (使用提供商默认值)")
+            generation = None
+            try:
+                logger.debug(f"开始为 {self.config.thread_id} 执行线程")
+                response = await self.thread_manager.run_thread(
+                    thread_id=self.config.thread_id,
+                    system_prompt=system_message,
+                    stream=True,
+                    llm_model=self.config.model_name,
+                    llm_temperature=0,
+                    llm_max_tokens=max_tokens,
+                    tool_choice="auto",
+                    max_xml_tool_calls=1,
+                    temporary_message=temporary_message,
+                    latest_user_message_content=latest_user_message_content,
+                    processor_config=ProcessorConfig(
+                        xml_tool_calling=True,
+                        native_tool_calling=False,
+                        execute_tools=True,
+                        execute_on_stream=True,
+                        tool_execution_strategy="parallel",
+                        xml_adding_strategy="user_message",
+                    ),
+                    native_max_auto_continues=self.config.native_max_auto_continues,
+                    cancellation_event=cancellation_event,
+                )
+
+                last_tool_call = None
+                agent_should_terminate = False
+                error_detected = False
+
+                try:
+                    if hasattr(response, "__aiter__") and not isinstance(
+                        response, dict
+                    ):
+                        async for chunk in response:
+                            # 检查来自thread_manager的错误状态
+                            if (
+                                isinstance(chunk, dict)
+                                and chunk.get("type") == "status"
+                                and chunk.get("status") == "error"
+                            ):
+                                logger.error(
+                                    f"线程执行出错: {chunk.get('message', '未知错误')}"
+                                )
+                                error_detected = True
+                                yield chunk
+                                continue
+
+                            # 检查流中的错误状态（消息格式）
+                            if (
+                                isinstance(chunk, dict)
+                                and chunk.get("type") == "status"
+                            ):
+                                try:
+                                    content = chunk.get("content", {})
+                                    if isinstance(content, str):
+                                        content = json.loads(content)
+
+                                    # 检查错误状态
+                                    if content.get("status_type") == "error":
+                                        error_detected = True
+                                        yield chunk
+                                        continue
+
+                                    # 检查代理终止
+                                    metadata = chunk.get("metadata", {})
+                                    if isinstance(metadata, str):
+                                        metadata = json.loads(metadata)
+
+                                    if metadata.get("agent_should_terminate"):
+                                        agent_should_terminate = True
+
+                                        if content.get("function_name"):
+                                            last_tool_call = content["function_name"]
+                                        elif content.get("xml_tag_name"):
+                                            last_tool_call = content["xml_tag_name"]
+
+                                except Exception:
+                                    pass
+
+                            # 检查助手内容中的终止XML工具
+                            if chunk.get("type") == "assistant" and "content" in chunk:
+                                try:
+                                    content = chunk.get("content", "{}")
+                                    if isinstance(content, str):
+                                        assistant_content_json = json.loads(content)
+                                    else:
+                                        assistant_content_json = content
+
+                                    assistant_text = assistant_content_json.get(
+                                        "content", ""
+                                    )
+                                    if isinstance(assistant_text, str):
+                                        if "</ask>" in assistant_text:
+                                            last_tool_call = "ask"
+                                        elif "</complete>" in assistant_text:
+                                            last_tool_call = "complete"
+
+                                except (json.JSONDecodeError, Exception):
+                                    pass
+
+                            yield chunk
+                    else:
+                        # 非流式响应或错误字典
+                        # logger.debug(f"响应不是异步可迭代的: {type(response)}")
+
+                        # 检查是否是错误字典
+                        if (
+                            isinstance(response, dict)
+                            and response.get("type") == "status"
+                            and response.get("status") == "error"
+                        ):
+                            logger.error(
+                                f"线程返回错误: {response.get('message', '未知错误')}"
+                            )
+                            error_detected = True
+                            yield response
+                        else:
+                            logger.warning(f"意外的响应类型: {type(response)}")
+                            error_detected = True
+
+                    if error_detected:
+                        break
+
+                    if agent_should_terminate or last_tool_call in ["ask", "complete"]:
+                        continue_execution = False
+
+                except Exception as e:
+                    # 使用ErrorProcessor进行安全错误处理
+                    processed_error = ErrorProcessor.process_system_error(
+                        e, context={"thread_id": self.config.thread_id}
+                    )
+                    ErrorProcessor.log_error(processed_error)
+                    yield processed_error.to_stream_dict()
+                    break
+
+            except Exception as e:
+                # 使用ErrorProcessor进行安全错误转换
+                processed_error = ErrorProcessor.process_system_error(
+                    e, context={"thread_id": self.config.thread_id}
+                )
+                ErrorProcessor.log_error(processed_error)
+                yield processed_error.to_stream_dict()
+                break
+
+        try:
+            asyncio.create_task(asyncio.to_thread(lambda: langfuse.flush()))
+        except Exception as e:
+            logger.warning(f"刷新Langfuse失败: {e}")
+
+
+async def run_agent(
+    thread_id: str,
+    project_id: str,
+    thread_manager: Optional[ThreadManager] = None,
+    native_max_auto_continues: int = 25,
+    max_iterations: int = 100,
+    model_name: str = "glm-4.6",
+    agent_config: Optional[dict] = None,
+    cancellation_event: Optional[asyncio.Event] = None,
+):
+    effective_model = model_name
+
+    config = AgentConfig(
+        thread_id=thread_id,
+        project_id=project_id,
+        native_max_auto_continues=native_max_auto_continues,
+        max_iterations=max_iterations,
+        model_name=effective_model,
+        agent_config=agent_config,
+    )
+
+    runner = AgentRunner(config)
+    async for chunk in runner.run(cancellation_event=cancellation_event):
+        yield chunk

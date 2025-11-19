@@ -13,6 +13,7 @@ from loguru import logger
 from tenacity import AsyncRetrying, stop_after_attempt, wait_fixed
 
 from configs import app_config
+from core.run import run_agent
 from core.services import redis
 
 logger.info(
@@ -28,13 +29,12 @@ redis_broker = RedisBroker(
 dramatiq.set_broker(redis_broker)
 
 _initialized = False
-db = DBConnection()
 instance_id = ""
 
 
 async def initialize():
     """使用主 API 的资源初始化 Agent API。"""
-    global db, instance_id, _initialized
+    global instance_id, _initialized
 
     if _initialized:
         return  # 已经初始化
@@ -46,7 +46,6 @@ async def initialize():
         f"正在初始化工作进程，Redis 地址: {app_config.REDIS_HOST}:{app_config.REDIS_PORT}"
     )
     await redis.initialize_async()
-    await db.initialize()
 
     _initialized = True
     logger.info(f"✅ 工作进程初始化成功，实例 ID: {instance_id}")
