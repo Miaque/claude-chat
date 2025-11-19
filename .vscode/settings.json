@@ -1,13 +1,16 @@
 {
   "python.analysis.typeCheckingMode": "basic",
   "cursorpyright.analysis.typeCheckingMode": "basic",
+  "windsurfPyright.analysis.typeCheckingMode": "basic",
   "terminal.integrated.env.windows": {
     "PYTHONPATH": "${workspaceFolder}"
   },
   "python.analysis.extraPaths": ["${workspaceFolder}"],
   "cursorpyright.analysis.extraPaths": ["${workspaceFolder}"],
+  "windsurfPyright.analysis.extraPaths": ["${workspaceFolder}"],
   "python.analysis.autoImportCompletions": true,
   "cursorpyright.analysis.autoImportCompletions": true,
+  "windsurfPyright.analysis.autoImportCompletions": true,
   "python.analysis.indexing": true,
   "python.analysis.packageIndexDepths": [
     {
@@ -28,5 +31,6 @@
     "spider_wx_pc": true,
     "frontend": true,
     ".history": true
-  }
+  },
+  "python.languageServer": "None"
 }

@@ -16,7 +16,7 @@
 
 ### 测试
 
-- **运行测试**: `pytest -s` (在 `pytest.ini` 中配置，支持 `.env` 文件)
+- **运行测试**: `uv run pytest -s` (在 `pytest.ini` 中配置，支持 `.env` 文件)
 - **测试配置**: 测试使用 pytest，并从 `.env` 加载环境变量
 
 ### 代码质量
