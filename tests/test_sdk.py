@@ -3,12 +3,6 @@ from claude_agent_sdk import ClaudeAgentOptions, ClaudeSDKClient
 from claude_agent_sdk.types import SystemPromptPreset
 
 
-async def messages_to_async_iterable(messages):
-    """将消息列表转换为异步可迭代对象"""
-    for msg in messages:
-        yield msg
-
-
 @pytest.mark.asyncio
 async def test_sdk():
     options = ClaudeAgentOptions(
@@ -19,15 +13,8 @@ async def test_sdk():
         allowed_tools=["WebFetch", "WebSearch"],
     )
     async with ClaudeSDKClient(options=options) as client:
-        history = [
-            {"role": "user", "content": "你好，你是谁？"},
-            {"role": "assistant", "content": "我是小明"},
-        ]
-        new_input = "你是谁？"
+        await client.query("今天星期几")
 
-        messages = history + [{"role": "user", "content": new_input}]
-        # 将列表转换为异步可迭代对象
-        await client.query(messages_to_async_iterable(messages))
-
+        print("\n")
         async for message in client.receive_response():
             print(message)

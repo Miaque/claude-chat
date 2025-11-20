@@ -52,17 +52,15 @@ async def generate_and_update_project_name(project_id: str, prompt: str):
             temperature=0.7,
             response_format={"type": "json_object"},
             stream=False,
+            system_prompt=system_prompt,
+            prompt=user_message,
         )
 
         generated_name = None
         selected_icon = None
 
-        if (
-            response
-            and response.get("choices")
-            and response["choices"][0].get("message")
-        ):
-            raw_content = response["choices"][0]["message"].get("content", "").strip()
+        if response and response.get("result"):
+            raw_content = response.get("result").strip()
             try:
                 parsed_response = json.loads(raw_content)
 
@@ -139,5 +137,4 @@ async def generate_and_update_project_name(project_id: str, prompt: str):
             f"项目 {project_id} 的后台命名任务出错: {str(e)}\n{traceback.format_exc()}"
         )
     finally:
-        # 这里不需要断开 DBConnection 单例实例
         logger.debug(f"完成项目的后台命名和图标选择任务: {project_id}")

@@ -246,14 +246,7 @@ async def unified_agent_start(
         )
 
     try:
-        # ====================================================================
-        # Branch: Existing Thread vs New Thread
-        # ====================================================================
-
         if thread_id:
-            # ================================================================
-            # EXISTING THREAD PATH
-            # ================================================================
             logger.debug(f"Starting agent on existing thread: {thread_id}")
             structlog.contextvars.bind_contextvars(thread_id=thread_id)
 
@@ -317,10 +310,6 @@ async def unified_agent_start(
             }
 
         else:
-            # ================================================================
-            # NEW THREAD PATH
-            # ================================================================
-
             # Validate that prompt is provided for new threads
             if not prompt or (isinstance(prompt, str) and not prompt.strip()):
                 logger.error(

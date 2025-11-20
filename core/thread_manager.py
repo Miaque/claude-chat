@@ -6,8 +6,11 @@ from loguru import logger
 
 from core.error_processor import ErrorProcessor
 from core.response_processor import ProcessorConfig, ResponseProcessor
+from core.services.db import get_db
 from core.services.llm import LLMError, make_llm_api_call
 from core.tool import Tool
+from models.message import Message, MessageModel
+from models.thread import Thread
 
 ToolChoice = Literal["auto", "required", "none"]
 
@@ -19,7 +22,6 @@ class ThreadManager:
         self,
         agent_config: Optional[dict] = None,
     ):
-        self.db = DBConnection()
         # self.tool_registry = ToolRegistry()
 
         self.agent_config = agent_config
@@ -47,7 +49,6 @@ class ThreadManager:
     ) -> str:
         """在数据库中创建新线程。"""
         # logger.debug(f"创建新线程 (account_id: {account_id}, project_id: {project_id})")
-        client = await self.db.client
 
         thread_data = {"is_public": is_public, "metadata": metadata or {}}
         if account_id:
@@ -56,9 +57,14 @@ class ThreadManager:
             thread_data["project_id"] = project_id
 
         try:
-            result = await client.table("threads").insert(thread_data).execute()
-            if result.data and len(result.data) > 0 and "thread_id" in result.data[0]:
-                thread_id = result.data[0]["thread_id"]
+            with get_db() as db:
+                thread = Thread(**thread_data)
+                db.add(thread)
+                db.commit()
+                db.refresh(thread)
+
+            if thread:
+                thread_id = thread.thread_id
                 logger.info(f"成功创建线程: {thread_id}")
                 return thread_id
             else:
@@ -79,7 +85,6 @@ class ThreadManager:
     ):
         """向线程中添加消息到数据库。"""
         # logger.debug(f"向线程 {thread_id} 添加类型为 '{type}' 的消息")
-        client = await self.db.client
 
         data_to_insert = {
             "thread_id": thread_id,
@@ -95,10 +100,14 @@ class ThreadManager:
             data_to_insert["agent_version_id"] = agent_version_id
 
         try:
-            result = await client.table("messages").insert(data_to_insert).execute()
+            with get_db() as db:
+                message = Message(**data_to_insert)
+                db.add(message)
+                db.commit()
+                db.refresh(message)
 
-            if result.data and len(result.data) > 0 and "message_id" in result.data[0]:
-                saved_message = result.data[0]
+            if message:
+                saved_message = MessageModel.model_validate(message)
 
                 return saved_message
             else:
@@ -111,7 +120,6 @@ class ThreadManager:
     async def get_llm_messages(self, thread_id: str) -> List[Dict[str, Any]]:
         """获取线程的所有消息。"""
         logger.debug(f"获取线程 {thread_id} 的消息")
-        client = await self.db.client
 
         try:
             all_messages = []
@@ -119,21 +127,27 @@ class ThreadManager:
             offset = 0
 
             while True:
-                result = (
-                    await client.table("messages")
-                    .select("message_id, type, content, metadata")
-                    .eq("thread_id", thread_id)
-                    .eq("is_llm_message", True)
-                    .order("created_at")
-                    .range(offset, offset + batch_size - 1)
-                    .execute()
-                )
+                with get_db() as db:
+                    result = (
+                        db.query(
+                            Message.message_id,
+                            Message.type,
+                            Message.content,
+                            Message.metadata,
+                        )
+                        .filter(Message.thread_id == thread_id)
+                        .filter(Message.is_llm_message == True)
+                        .order_by(Message.created_at)
+                        .offset(offset)
+                        .limit(batch_size)
+                        .all()
+                    )
 
-                if not result.data:
+                if not result:
                     break
 
-                all_messages.extend(result.data)
-                if len(result.data) < batch_size:
+                all_messages.extend(result)
+                if len(result) < batch_size:
                     break
                 offset += batch_size
 

@@ -1,7 +1,8 @@
+from dataclasses import asdict
 from typing import Any, AsyncGenerator, Dict, List, Optional, Union
 
 from claude_agent_sdk import ClaudeAgentOptions, ClaudeSDKClient
-from claude_agent_sdk.types import SystemPromptPreset
+from claude_agent_sdk.types import SystemPromptPreset, ResultMessage
 from loguru import logger
 
 from core.error_processor import ErrorProcessor
@@ -31,6 +32,8 @@ async def make_llm_api_call(
     model_id: Optional[str] = None,
     headers: Optional[Dict[str, str]] = None,
     extra_headers: Optional[Dict[str, str]] = None,
+    system_prompt: Optional[str] = None,
+    prompt: Optional[str] = None,
 ) -> Union[Dict[str, Any], AsyncGenerator]:
     """使用Claude SDK进行语言模型API调用。"""
     logger.info(f"正在向模型发起LLM API调用: {model_name}，包含 {len(messages)} 条消息")
@@ -38,20 +41,24 @@ async def make_llm_api_call(
     try:
         options = ClaudeAgentOptions(
             system_prompt=SystemPromptPreset(
-                type="preset", preset="claude_code", append="总是使用中文回复"
+                type="preset",
+                preset="claude_code",
+                append="总是使用中文回复" if not system_prompt else system_prompt,
             ),
             include_partial_messages=True if stream else False,
             allowed_tools=["WebFetch", "WebSearch"],
         )
         async with ClaudeSDKClient(options=options) as client:
-            await client.query(messages)
+            await client.query(prompt)
 
             response = client.receive_response()
 
-        if stream:
-            return _wrap_streaming_response(response)
+            if stream:
+                return _wrap_streaming_response(response)
 
-        return response
+            async for chunk in response:
+                if isinstance(chunk, ResultMessage):
+                    return asdict(chunk)
 
     except Exception as e:
         # 使用ErrorProcessor一致地处理错误
@@ -62,7 +69,7 @@ async def make_llm_api_call(
         raise LLMError(processed_error.message)
 
 
-async def _wrap_streaming_response(response) -> AsyncGenerator:
+async def _wrap_streaming_response(response) -> ResultMessage:
     """包装流式响应以处理迭代过程中的错误。"""
     try:
         async for chunk in response:
