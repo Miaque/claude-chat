@@ -5,19 +5,30 @@
     "version": "0.2.0",
     "configurations": [
         {
-            "name": "api",
+            "name": "worker",
             "type": "debugpy",
             "request": "launch",
-            "module": "uvicorn",
+            "module": "dramatiq",
+            "cwd": "${workspaceFolder}",
+            "console": "integratedTerminal",
+            "envFile": "${workspaceFolder}/.env",
             "args": [
-                "api:app",
-                "--host",
-                "0.0.0.0",
-                "--port",
-                "8080",
-                "--reload"
-            ],
-            "jinja": true
+                "--skip-logging",
+                "--processes",
+                "4",
+                "--threads",
+                "4",
+                "run_agent_background"
+            ]
+        },
+        {
+            "name": "api",
+            "type": "debugpy",
+            "cwd": "${workspaceFolder}",
+            "request": "launch",
+            "program": "api.py",
+            "console": "integratedTerminal",
+            "envFile": "${workspaceFolder}/.env"
         }
     ]
 }

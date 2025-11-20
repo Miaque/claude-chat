@@ -1,5 +1,9 @@
+import uuid
+from datetime import datetime
+from typing import Optional
 from uuid import uuid4
 
+from pydantic import BaseModel
 from sqlalchemy import UUID, Boolean, Column, DateTime, Text
 from sqlalchemy.dialects.postgresql import JSONB
 
@@ -18,3 +22,15 @@ class Project(Base):
     created_at = Column(DateTime, nullable=False, index=True)
     updated_at = Column(DateTime, nullable=False)
     icon_name = Column(Text)
+
+
+class ProjectModel(BaseModel):
+    project_id: uuid.UUID
+    name: str
+    description: Optional[str] = None
+    account_id: uuid.UUID
+    sandbox: dict
+    is_public: bool
+    created_at: datetime
+    updated_at: datetime
+    icon_name: Optional[str] = None

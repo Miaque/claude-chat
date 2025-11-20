@@ -15,6 +15,8 @@ from tenacity import AsyncRetrying, stop_after_attempt, wait_fixed
 from configs import app_config
 from core.run import run_agent
 from core.services import redis
+from core.services.db import get_db
+from models.agent_run import AgentRun
 
 logger.info(
     f"正在配置 Dramatiq 代理，Redis 地址: {app_config.REDIS_HOST}:{app_config.REDIS_PORT}"
@@ -113,7 +115,6 @@ async def run_agent_background(
         f"开始后台 Agent 运行: {agent_run_id}，线程: {thread_id} (实例: {instance_id})"
     )
 
-    client = await db.client
     start_time = datetime.now(ZoneInfo("Asia/Shanghai"))
     total_responses = 0
     pubsub = None
@@ -254,9 +255,7 @@ async def run_agent_background(
         all_responses = [json.loads(r) for r in all_responses_json]
 
         # 更新数据库状态
-        await update_agent_run_status(
-            client, agent_run_id, final_status, error=error_message
-        )
+        await update_agent_run_status(agent_run_id, final_status, error=error_message)
 
         # 发布最终控制信号 (END_STREAM 或 ERROR)
         control_signal = (
@@ -296,7 +295,7 @@ async def run_agent_background(
 
         # 更新数据库状态
         await update_agent_run_status(
-            client, agent_run_id, "failed", error=f"{error_message}\n{traceback_str}"
+            agent_run_id, "failed", error=f"{error_message}\n{traceback_str}"
         )
 
         # 发布 ERROR 信号
@@ -388,7 +387,6 @@ async def _cleanup_redis_response_list(agent_run_id: str):
 
 
 async def update_agent_run_status(
-    client,
     agent_run_id: str,
     status: str,
     error: Optional[str] = None,
@@ -398,42 +396,39 @@ async def update_agent_run_status(
     Returns True if update was successful.
     """
     try:
-        update_data = {
-            "status": status,
-            "completed_at": datetime.now(ZoneInfo("Asia/Shanghai")).isoformat(),
-        }
-
-        if error:
-            update_data["error"] = error
-
         # 最多重试 3 次
         for retry in range(3):
             try:
-                update_result = (
-                    await client.table("agent_runs")
-                    .update(update_data)
-                    .eq("id", agent_run_id)
-                    .execute()
-                )
+                with get_db() as db:
+                    agent_run = (
+                        db.query(AgentRun).filter(AgentRun.id == agent_run_id).first()
+                    )
+                    if agent_run:
+                        agent_run.status = status
+                        agent_run.completed_at = datetime.now(ZoneInfo("Asia/Shanghai"))
+                        if error:
+                            agent_run.error = error
+                        db.commit()
 
-                if hasattr(update_result, "data") and update_result.data:
+                if agent_run:
                     # logger.debug(f"成功更新 Agent 运行 {agent_run_id} 状态为 '{status}' (重试 {retry})")
 
                     # 验证更新
-                    verify_result = (
-                        await client.table("agent_runs")
-                        .select("status", "completed_at")
-                        .eq("id", agent_run_id)
-                        .execute()
-                    )
-                    if verify_result.data:
-                        actual_status = verify_result.data[0].get("status")
-                        completed_at = verify_result.data[0].get("completed_at")
+                    with get_db() as db:
+                        verify_result = (
+                            db.query(AgentRun.status, AgentRun.completed_at)
+                            .filter(AgentRun.id == agent_run_id)
+                            .first()
+                        )
+
+                    if verify_result:
+                        actual_status = verify_result.status
+                        completed_at = verify_result.completed_at
                         # logger.debug(f"验证 Agent 运行更新: status={actual_status}, completed_at={completed_at}")
                     return True
                 else:
                     logger.warning(
-                        f"数据库更新未返回数据，Agent 运行: {agent_run_id}，重试: {retry}: {update_result}"
+                        f"数据库更新未返回数据，Agent 运行: {agent_run_id}，重试: {retry}: {agent_run}"
                     )
                     if retry == 2:  # 最后一次重试
                         logger.error(
