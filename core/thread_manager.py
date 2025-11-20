@@ -1,30 +1,29 @@
 import asyncio
 import json
-from email import message
 from typing import Any, AsyncGenerator, Dict, List, Literal, Optional, Type, Union, cast
 
 from loguru import logger
 
 from core.error_processor import ErrorProcessor
 from core.response_processor import ProcessorConfig, ResponseProcessor
-from core.services.llm import LLMError
+from core.services.llm import LLMError, make_llm_api_call
+from core.tool import Tool
 
 ToolChoice = Literal["auto", "required", "none"]
 
 
 class ThreadManager:
-    """Manages conversation threads with LLM models and tool execution."""
+    """管理对话线程，集成LLM模型和工具执行。"""
 
     def __init__(
         self,
         agent_config: Optional[dict] = None,
     ):
         self.db = DBConnection()
-        self.tool_registry = ToolRegistry()
+        # self.tool_registry = ToolRegistry()
 
         self.agent_config = agent_config
         self.response_processor = ResponseProcessor(
-            tool_registry=self.tool_registry,
             add_message_callback=self.add_message,
             agent_config=self.agent_config,
         )
@@ -35,8 +34,9 @@ class ThreadManager:
         function_names: Optional[List[str]] = None,
         **kwargs,
     ):
-        """Add a tool to the ThreadManager."""
-        self.tool_registry.register_tool(tool_class, function_names, **kwargs)
+        """向ThreadManager添加工具。"""
+        # self.tool_registry.register_tool(tool_class, function_names, **kwargs)
+        pass
 
     async def create_thread(
         self,
@@ -45,8 +45,8 @@ class ThreadManager:
         is_public: bool = False,
         metadata: Optional[Dict[str, Any]] = None,
     ) -> str:
-        """Create a new thread in the database."""
-        # logger.debug(f"Creating new thread (account_id: {account_id}, project_id: {project_id})")
+        """在数据库中创建新线程。"""
+        # logger.debug(f"创建新线程 (account_id: {account_id}, project_id: {project_id})")
         client = await self.db.client
 
         thread_data = {"is_public": is_public, "metadata": metadata or {}}
@@ -59,13 +59,13 @@ class ThreadManager:
             result = await client.table("threads").insert(thread_data).execute()
             if result.data and len(result.data) > 0 and "thread_id" in result.data[0]:
                 thread_id = result.data[0]["thread_id"]
-                logger.info(f"Successfully created thread: {thread_id}")
+                logger.info(f"成功创建线程: {thread_id}")
                 return thread_id
             else:
-                raise Exception("Failed to create thread: no thread_id returned")
+                raise Exception("创建线程失败: 未返回thread_id")
         except Exception as e:
-            logger.error(f"Failed to create thread: {str(e)}", exc_info=True)
-            raise Exception(f"Thread creation failed: {str(e)}")
+            logger.error(f"创建线程失败: {str(e)}", exc_info=True)
+            raise Exception(f"线程创建失败: {str(e)}")
 
     async def add_message(
         self,
@@ -77,8 +77,8 @@ class ThreadManager:
         agent_id: Optional[str] = None,
         agent_version_id: Optional[str] = None,
     ):
-        """Add a message to the thread in the database."""
-        # logger.debug(f"Adding message of type '{type}' to thread {thread_id}")
+        """向线程中添加消息到数据库。"""
+        # logger.debug(f"向线程 {thread_id} 添加类型为 '{type}' 的消息")
         client = await self.db.client
 
         data_to_insert = {
@@ -102,17 +102,15 @@ class ThreadManager:
 
                 return saved_message
             else:
-                logger.error(f"Insert operation failed for thread {thread_id}")
+                logger.error(f"线程 {thread_id} 的插入操作失败")
                 return None
         except Exception as e:
-            logger.error(
-                f"Failed to add message to thread {thread_id}: {str(e)}", exc_info=True
-            )
+            logger.error(f"向线程 {thread_id} 添加消息失败: {str(e)}", exc_info=True)
             raise
 
     async def get_llm_messages(self, thread_id: str) -> List[Dict[str, Any]]:
-        """Get all messages for a thread."""
-        logger.debug(f"Getting messages for thread {thread_id}")
+        """获取线程的所有消息。"""
+        logger.debug(f"获取线程 {thread_id} 的消息")
         client = await self.db.client
 
         try:
@@ -144,27 +142,27 @@ class ThreadManager:
 
             messages = []
             for item in all_messages:
-                # Check if this message has a compressed version in metadata
+                # 检查此消息在元数据中是否有压缩版本
                 content = item["content"]
                 metadata = item.get("metadata", {})
                 is_compressed = False
 
-                # If compressed, use compressed_content for LLM instead of full content
+                # 如果已压缩，对LLM使用compressed_content而不是完整内容
                 if isinstance(metadata, dict) and metadata.get("compressed"):
                     compressed_content = metadata.get("compressed_content")
                     if compressed_content:
                         content = compressed_content
                         is_compressed = True
-                        # logger.debug(f"Using compressed content for message {item['message_id']}")
+                        # logger.debug(f"对消息 {item['message_id']} 使用压缩内容")
 
-                # Parse content and add message_id
+                # 解析内容并添加message_id
                 if isinstance(content, str):
                     try:
                         parsed_item = json.loads(content)
                         parsed_item["message_id"] = item["message_id"]
                         messages.append(parsed_item)
                     except json.JSONDecodeError:
-                        # If compressed, content is a plain string (not JSON) - this is expected
+                        # 如果已压缩，内容是纯字符串(不是JSON) - 这是预期的
                         if is_compressed:
                             messages.append(
                                 {
@@ -174,7 +172,7 @@ class ThreadManager:
                                 }
                             )
                         else:
-                            logger.error(f"Failed to parse message: {content[:100]}")
+                            logger.error(f"解析消息失败: {content[:100]}")
                 else:
                     content["message_id"] = item["message_id"]
                     messages.append(content)
@@ -183,7 +181,7 @@ class ThreadManager:
 
         except Exception as e:
             logger.error(
-                f"Failed to get messages for thread {thread_id}: {str(e)}",
+                f"获取线程 {thread_id} 的消息失败: {str(e)}",
                 exc_info=True,
             )
             return []
@@ -204,24 +202,19 @@ class ThreadManager:
         latest_user_message_content: Optional[str] = None,
         cancellation_event: Optional[asyncio.Event] = None,
     ) -> Union[Dict[str, Any], AsyncGenerator]:
-        """Run a conversation thread with LLM integration and tool execution."""
-        logger.debug(
-            f"🚀 Starting thread execution for {thread_id} with model {llm_model}"
-        )
+        """运行对话线程，集成LLM和工具执行。"""
+        logger.debug(f"🚀 开始执行线程 {thread_id}，使用模型 {llm_model}")
 
-        # Ensure we have a valid ProcessorConfig object
+        # 确保我们有有效的ProcessorConfig对象
         if processor_config is None:
             config = ProcessorConfig()
         elif isinstance(processor_config, ProcessorConfig):
             config = processor_config
         else:
             logger.error(
-                f"Invalid processor_config type: {type(processor_config)}, creating default"
+                f"无效的processor_config类型: {type(processor_config)}，创建默认值"
             )
             config = ProcessorConfig()
-
-        if max_xml_tool_calls > 0 and not config.max_xml_tool_calls:
-            config.max_xml_tool_calls = max_xml_tool_calls
 
         auto_continue_state = {
             "count": 0,
@@ -229,7 +222,7 @@ class ThreadManager:
             "continuous_state": {"accumulated_content": "", "thread_run_id": None},
         }
 
-        # Single execution if auto-continue is disabled
+        # 如果禁用自动继续，则单次执行
         if native_max_auto_continues == 0:
             result = await self._execute_run(
                 thread_id,
@@ -246,13 +239,13 @@ class ThreadManager:
                 cancellation_event,
             )
 
-            # If result is an error dict, convert it to a generator that yields the error
+            # 如果结果是错误字典，将其转换为生成器并产出错误
             if isinstance(result, dict) and result.get("status") == "error":
                 return self._create_single_error_generator(result)
 
             return result
 
-        # Auto-continue execution
+        # 自动继续执行
         return self._auto_continue_generator(
             thread_id,
             system_prompt,
@@ -284,28 +277,26 @@ class ThreadManager:
         latest_user_message_content: Optional[str] = None,
         cancellation_event: Optional[asyncio.Event] = None,
     ) -> Union[Dict[str, Any], AsyncGenerator]:
-        """Execute a single LLM run."""
+        """执行单次LLM运行。"""
 
-        # CRITICAL: Ensure config is always a ProcessorConfig object
+        # 关键: 确保config始终是ProcessorConfig对象
         if not isinstance(config, ProcessorConfig):
             logger.error(
-                f"ERROR: config is {type(config)}, expected ProcessorConfig. Value: {config}"
+                f"错误: config是{type(config)}，期望ProcessorConfig。值: {config}"
             )
-            config = ProcessorConfig()  # Create new instance as fallback
+            config = ProcessorConfig()  # 创建新实例作为后备
 
         try:
-            estimated_total_tokens = (
-                None  # Will be passed to response processor to avoid recalculation
-            )
+            estimated_total_tokens = None  # 将传递给响应处理器以避免重新计算
 
-            # CRITICAL: Check if this is an auto-continue iteration FIRST (before any token counting)
+            # 关键: 首先检查这是否是自动继续迭代(在任何token计数之前)
             is_auto_continue = auto_continue_state.get("count", 0) > 0
 
-            # Always fetch messages (needed for LLM call)
-            # Fast path just skips compression, not fetching!
+            # 始终获取消息(需要用于LLM调用)
+            # 快速路径只是跳过压缩，而不是获取！
             messages = await self.get_llm_messages(thread_id)
 
-            # Handle auto-continue context
+            # 处理自动继续上下文
             if auto_continue_state["count"] > 0 and auto_continue_state[
                 "continuous_state"
             ].get("accumulated_content"):
@@ -314,20 +305,16 @@ class ThreadManager:
                 ]
                 messages.append({"role": "assistant", "content": partial_content})
 
-            # Get tool schemas for LLM API call (after compression)
-            openapi_tool_schemas = (
-                self.tool_registry.get_openapi_schemas()
-                if config.native_tool_calling
-                else None
-            )
+            # 获取LLM调用的工具模式(在压缩之后)
+            openapi_tool_schemas = None
 
             prepared_messages = messages
 
-            # Note: We don't log token count here because cached blocks give inaccurate counts
-            # The LLM's usage.prompt_tokens (reported after the call) is the accurate source of truth
-            logger.info(f"📤 Sending {len(prepared_messages)} prepared messages to LLM")
+            # 注意: 我们不在此处记录token计数，因为缓存块给出不准确的计数
+            # LLM的usage.prompt_tokens(在调用后报告)是准确的真相来源
+            logger.info(f"📤 向LLM发送 {len(prepared_messages)} 条准备好的消息")
 
-            # Make LLM call
+            # 调用LLM
             try:
                 llm_response = await make_llm_api_call(
                     prepared_messages,
@@ -335,13 +322,12 @@ class ThreadManager:
                     temperature=llm_temperature,
                     max_tokens=llm_max_tokens,
                     tools=openapi_tool_schemas,
-                    tool_choice=tool_choice if config.native_tool_calling else "none",
                     stream=stream,
                 )
             except LLMError as e:
                 return {"type": "status", "status": "error", "message": str(e)}
 
-            # Check for error response
+            # 检查错误响应
             if isinstance(llm_response, dict) and llm_response.get("status") == "error":
                 return llm_response
 
@@ -391,31 +377,25 @@ class ThreadManager:
         latest_user_message_content: Optional[str] = None,
         cancellation_event: Optional[asyncio.Event] = None,
     ) -> AsyncGenerator:
-        """Generator that handles auto-continue logic."""
-        logger.debug(
-            f"Starting auto-continue generator, max: {native_max_auto_continues}"
-        )
-        # logger.debug(f"Config type in auto-continue generator: {type(config)}")
+        """处理自动继续逻辑的生成器。"""
+        logger.debug(f"启动自动继续生成器，最大次数: {native_max_auto_continues}")
+        # logger.debug(f"自动继续生成器中的Config类型: {type(config)}")
 
-        # Ensure config is valid ProcessorConfig
+        # 确保config是有效的ProcessorConfig
         if not isinstance(config, ProcessorConfig):
-            logger.error(
-                f"Invalid config type in auto-continue: {type(config)}, creating new one"
-            )
+            logger.error(f"自动继续中无效的config类型: {type(config)}，创建新的")
             config = ProcessorConfig()
 
         while (
             auto_continue_state["active"]
             and auto_continue_state["count"] < native_max_auto_continues
         ):
-            auto_continue_state["active"] = False  # Reset for this iteration
+            auto_continue_state["active"] = False  # 重置本次迭代
 
             try:
-                # Check for cancellation before continuing
+                # 继续前检查取消信号
                 if cancellation_event and cancellation_event.is_set():
-                    logger.info(
-                        f"Cancellation signal received in auto-continue generator for thread {thread_id}"
-                    )
+                    logger.info(f"线程 {thread_id} 的自动继续生成器收到取消信号")
                     break
 
                 response_gen = await self._execute_run(
@@ -435,7 +415,7 @@ class ThreadManager:
                     cancellation_event,
                 )
 
-                # Handle error responses
+                # 处理错误响应
                 if (
                     isinstance(response_gen, dict)
                     and response_gen.get("status") == "error"
@@ -443,27 +423,27 @@ class ThreadManager:
                     yield response_gen
                     break
 
-                # Process streaming response
+                # 处理流式响应
                 if hasattr(response_gen, "__aiter__"):
                     async for chunk in cast(AsyncGenerator, response_gen):
-                        # Check for cancellation
+                        # 检查取消信号
                         if cancellation_event and cancellation_event.is_set():
                             logger.info(
-                                f"Cancellation signal received while processing stream in auto-continue for thread {thread_id}"
+                                f"处理线程 {thread_id} 自动继续流时收到取消信号"
                             )
                             break
 
-                        # Check for auto-continue triggers
+                        # 检查自动继续触发器
                         should_continue = self._check_auto_continue_trigger(
                             chunk, auto_continue_state, native_max_auto_continues
                         )
 
-                        # Skip finish chunks that trigger auto-continue (but NOT tool execution, FE needs those)
+                        # 跳过触发自动继续的完成块(但不是工具执行，前端需要那些)
                         if should_continue:
                             if chunk.get("type") == "status":
                                 try:
                                     content = json.loads(chunk.get("content", "{}"))
-                                    # Only skip length limit finish statuses (frontend needs tool execution finish)
+                                    # 仅跳过长度限制完成状态(前端需要工具执行完成)
                                     if content.get("finish_reason") == "length":
                                         continue
                                 except (json.JSONDecodeError, TypeError):
@@ -484,17 +464,15 @@ class ThreadManager:
                 yield processed_error.to_stream_dict()
                 return
 
-        # Handle max iterations reached
+        # 处理达到最大迭代次数
         if (
             auto_continue_state["active"]
             and auto_continue_state["count"] >= native_max_auto_continues
         ):
-            logger.warning(
-                f"Reached maximum auto-continue limit ({native_max_auto_continues})"
-            )
+            logger.warning(f"达到最大自动继续限制 ({native_max_auto_continues})")
             yield {
                 "type": "content",
-                "content": f"\n[Agent reached maximum auto-continue limit of {native_max_auto_continues}]",
+                "content": f"\n[Agent达到最大自动继续限制 {native_max_auto_continues}]",
             }
 
     def _check_auto_continue_trigger(
@@ -503,7 +481,7 @@ class ThreadManager:
         auto_continue_state: Dict[str, Any],
         native_max_auto_continues: int,
     ) -> bool:
-        """Check if a response chunk should trigger auto-continue."""
+        """检查响应块是否应该触发自动继续。"""
         if chunk.get("type") == "status":
             try:
                 content = (
@@ -514,24 +492,24 @@ class ThreadManager:
                 finish_reason = content.get("finish_reason")
                 tools_executed = content.get("tools_executed", False)
 
-                # Trigger auto-continue for: native tool calls, length limit, or XML tools executed
+                # 为以下情况触发自动继续: 原生工具调用、长度限制或XML工具已执行
                 if finish_reason == "tool_calls" or tools_executed:
                     if native_max_auto_continues > 0:
                         logger.debug(
-                            f"Auto-continuing for tool execution ({auto_continue_state['count'] + 1}/{native_max_auto_continues})"
+                            f"因工具执行自动继续 ({auto_continue_state['count'] + 1}/{native_max_auto_continues})"
                         )
                         auto_continue_state["active"] = True
                         auto_continue_state["count"] += 1
                         return True
                 elif finish_reason == "length":
                     logger.debug(
-                        f"Auto-continuing for length limit ({auto_continue_state['count'] + 1}/{native_max_auto_continues})"
+                        f"因长度限制自动继续 ({auto_continue_state['count'] + 1}/{native_max_auto_continues})"
                     )
                     auto_continue_state["active"] = True
                     auto_continue_state["count"] += 1
                     return True
                 elif finish_reason == "xml_tool_limit_reached":
-                    logger.debug("Stopping auto-continue due to XML tool limit")
+                    logger.debug("因XML工具限制停止自动继续")
                     auto_continue_state["active"] = False
             except (json.JSONDecodeError, TypeError):
                 pass
@@ -539,5 +517,5 @@ class ThreadManager:
         return False
 
     async def _create_single_error_generator(self, error_dict: Dict[str, Any]):
-        """Create an async generator that yields a single error message."""
+        """创建产出单个错误消息的异步生成器。"""
         yield error_dict

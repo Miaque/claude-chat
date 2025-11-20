@@ -7,6 +7,7 @@ from typing import Any, AsyncGenerator, Dict, List, Optional
 from loguru import logger
 
 from core.error_processor import ErrorProcessor
+from core.prompts.prompt import get_system_prompt
 from core.response_processor import ProcessorConfig
 from core.thread_manager import ThreadManager
 
@@ -27,82 +28,17 @@ class PromptManager:
         model_name: str,
         agent_config: Optional[dict],
         thread_id: str,
-        mcp_wrapper_instance: Optional[MCPToolWrapper],
         client=None,
         tool_registry=None,
-        xml_tool_calling: bool = True,
         user_id: Optional[str] = None,
     ) -> dict:
         default_system_content = get_system_prompt()
-
-        # if "anthropic" not in model_name.lower():
-        #     sample_response_path = os.path.join(os.path.dirname(__file__), 'prompts/samples/1.txt')
-        #     with open(sample_response_path, 'r') as file:
-        #         sample_response = file.read()
-        #     default_system_content = default_system_content + "\n\n <sample_assistant_response>" + sample_response + "</sample_assistant_response>"
 
         # 从代理的正常系统提示或默认提示开始
         if agent_config and agent_config.get("system_prompt"):
             system_content = agent_config["system_prompt"].strip()
         else:
             system_content = default_system_content
-
-        # 检查代理是否启用了构建工具 - 附加完整的构建工具提示
-        if agent_config:
-            agentpress_tools = agent_config.get("agentpress_tools", {})
-            has_builder_tools = any(
-                agentpress_tools.get(tool, False)
-                for tool in [
-                    "agent_config_tool",
-                    "mcp_search_tool",
-                    "credential_profile_tool",
-                    "trigger_tool",
-                ]
-            )
-
-            if has_builder_tools:
-                # 将完整的代理构建工具提示附加到现有系统提示
-                builder_prompt = get_agent_builder_prompt()
-                system_content += f"\n\n{builder_prompt}"
-
-        # 如果请求，将XML工具调用指令添加到系统提示
-        if xml_tool_calling and tool_registry:
-            openapi_schemas = tool_registry.get_openapi_schemas()
-
-            if openapi_schemas:
-                # 将模式转换为JSON字符串
-                schemas_json = json.dumps(openapi_schemas, indent=2)
-
-                examples_content = f"""
-
-在此环境中，您可以访问一组工具，可用于回答用户的问题。
-
-您可以通过编写<function_calls>块来调用函数，如下所示，作为您对用户回复的一部分：
-
-<function_calls>
-<invoke name="function_name">
-<parameter name="param_name">param_value</parameter>
-...
-</invoke>
-</function_calls>
-
-字符串和标量参数应按原样指定，而列表和对象应使用JSON格式。
-
-以下是JSON Schema格式中可用的函数：
-
-```json
-{schemas_json}
-```
-
-使用工具时：
-- 使用上面JSON模式中的确切函数名称
-- 包含模式中指定的所有必需参数
-- 在参数标签内将复杂数据（对象、数组）格式化为JSON字符串
-- 布尔值应为"true"或"false"（小写）
-"""
-
-                system_content += examples_content
-                logger.debug("已将XML工具示例附加到系统提示中")
 
         now = datetime.datetime.now(datetime.timezone.utc)
         datetime_info = f"\n\n=== 当前日期/时间信息 ===\n"
@@ -186,10 +122,8 @@ class AgentRunner:
             self.config.model_name,
             self.config.agent_config,
             self.config.thread_id,
-            mcp_wrapper_instance,
             self.client,
-            tool_registry=self.thread_manager.tool_registry,
-            xml_tool_calling=True,
+            # tool_registry=self.thread_manager.tool_registry,
             user_id=self.account_id,
         )
         logger.info(
@@ -254,12 +188,7 @@ class AgentRunner:
                     temporary_message=temporary_message,
                     latest_user_message_content=latest_user_message_content,
                     processor_config=ProcessorConfig(
-                        xml_tool_calling=True,
-                        native_tool_calling=False,
-                        execute_tools=True,
                         execute_on_stream=True,
-                        tool_execution_strategy="parallel",
-                        xml_adding_strategy="user_message",
                     ),
                     native_max_auto_continues=self.config.native_max_auto_continues,
                     cancellation_event=cancellation_event,

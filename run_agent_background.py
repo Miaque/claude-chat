@@ -192,7 +192,6 @@ async def run_agent_background(
         agent_gen = run_agent(
             thread_id=thread_id,
             project_id=project_id,
-            model_name=effective_model,
             agent_config=agent_config,
             cancellation_event=cancellation_event,
         )

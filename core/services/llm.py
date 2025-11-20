@@ -1,26 +1,20 @@
 from typing import Any, AsyncGenerator, Dict, List, Optional, Union
+
+from claude_agent_sdk import ClaudeAgentOptions, ClaudeSDKClient
+from claude_agent_sdk.types import SystemPromptPreset
 from loguru import logger
 
-# Constants
+from core.error_processor import ErrorProcessor
+
+# 常量
 MAX_RETRIES = 3
 provider_router = None
 
 
 class LLMError(Exception):
-    """Exception for LLM-related errors."""
+    """LLM相关错误的异常类。"""
 
     pass
-
-
-def _add_tools_config(
-    params: Dict[str, Any], tools: Optional[List[Dict[str, Any]]], tool_choice: str
-) -> None:
-    """Add tools configuration to parameters."""
-    if tools is None:
-        return
-
-    params.update({"tools": tools, "tool_choice": tool_choice})
-    # logger.debug(f"Added {len(tools)} tools to API parameters")
 
 
 async def make_llm_api_call(
@@ -30,66 +24,37 @@ async def make_llm_api_call(
     temperature: float = 0,
     max_tokens: Optional[int] = None,
     tools: Optional[List[Dict[str, Any]]] = None,
-    tool_choice: str = "auto",
     api_key: Optional[str] = None,
     api_base: Optional[str] = None,
-    stream: bool = True,  # Always stream for better UX
+    stream: bool = True,  # 始终使用流式传输以获得更好的用户体验
     top_p: Optional[float] = None,
     model_id: Optional[str] = None,
     headers: Optional[Dict[str, str]] = None,
     extra_headers: Optional[Dict[str, str]] = None,
-) -> Union[Dict[str, Any], AsyncGenerator, ModelResponse]:
-    """Make an API call to a language model using LiteLLM."""
-    logger.info(
-        f"Making LLM API call to model: {model_name} with {len(messages)} messages"
-    )
-
-    # Prepare parameters using centralized model configuration
-    from core.ai_models import model_manager
-
-    resolved_model_name = model_manager.resolve_model_id(model_name)
-    # logger.debug(f"Model resolution: '{model_name}' -> '{resolved_model_name}'")
-
-    # Only pass headers/extra_headers if they are not None to avoid overriding model config
-    override_params = {
-        "messages": messages,
-        "temperature": temperature,
-        "response_format": response_format,
-        "top_p": top_p,
-        "stream": stream,
-        "api_key": api_key,
-        "api_base": api_base,
-    }
-
-    # Only add headers if they are provided (not None)
-    if headers is not None:
-        override_params["headers"] = headers
-    if extra_headers is not None:
-        override_params["extra_headers"] = extra_headers
-
-    params = model_manager.get_litellm_params(resolved_model_name, **override_params)
-
-    # logger.debug(f"Parameters from model_manager.get_litellm_params: {params}")
-
-    if model_id:
-        params["model_id"] = model_id
-
-    if stream:
-        params["stream_options"] = {"include_usage": True}
-
-    _add_tools_config(params, tools, tool_choice)
+) -> Union[Dict[str, Any], AsyncGenerator]:
+    """使用Claude SDK进行语言模型API调用。"""
+    logger.info(f"正在向模型发起LLM API调用: {model_name}，包含 {len(messages)} 条消息")
 
     try:
-        response = await provider_router.acompletion(**params)
+        options = ClaudeAgentOptions(
+            system_prompt=SystemPromptPreset(
+                type="preset", preset="claude_code", append="总是使用中文回复"
+            ),
+            include_partial_messages=True if stream else False,
+            allowed_tools=["WebFetch", "WebSearch"],
+        )
+        async with ClaudeSDKClient(options=options) as client:
+            await client.query(messages)
 
-        # For streaming responses, we need to handle errors that occur during iteration
-        if hasattr(response, "__aiter__") and stream:
+            response = client.receive_response()
+
+        if stream:
             return _wrap_streaming_response(response)
 
         return response
 
     except Exception as e:
-        # Use ErrorProcessor to handle the error consistently
+        # 使用ErrorProcessor一致地处理错误
         processed_error = ErrorProcessor.process_llm_error(
             e, context={"model": model_name}
         )
@@ -98,12 +63,12 @@ async def make_llm_api_call(
 
 
 async def _wrap_streaming_response(response) -> AsyncGenerator:
-    """Wrap streaming response to handle errors during iteration."""
+    """包装流式响应以处理迭代过程中的错误。"""
     try:
         async for chunk in response:
             yield chunk
     except Exception as e:
-        # Convert streaming errors to processed errors
+        # 将流式错误转换为处理后的错误
         processed_error = ErrorProcessor.process_llm_error(e)
         ErrorProcessor.log_error(processed_error)
         raise LLMError(processed_error.message)
