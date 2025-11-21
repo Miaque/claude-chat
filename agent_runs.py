@@ -98,7 +98,7 @@ class ThreadAgentResponse(BaseModel):
 
 
 async def _get_agent_run_with_access_check(agent_run_id: str, user_id: str):
-    """"
+    """ "
     获取代理运行记录并验证用户是否有访问权限。
     """
 
@@ -130,11 +130,14 @@ async def _create_agent_run_record(thread_id: str, effective_model: str) -> str:
         agent_run_id: 创建的代理运行记录ID
     """
     with get_db() as db:
+        current_time = datetime.now()
         agent_run = AgentRun(
             **{
                 "thread_id": thread_id,
                 "status": "running",
-                "started_at": datetime.now(),
+                "started_at": current_time,
+                "created_at": current_time,
+                "updated_at": current_time,
                 "agent_id": None,
                 "agent_version_id": None,
                 "meta": {"model_name": effective_model},
@@ -494,7 +497,9 @@ async def get_active_agent_runs(
         logger.error(
             f"获取用户 {user_id} 活跃代理运行记录时出错: {str(e)}\n{traceback.format_exc()}"
         )
-        raise HTTPException(status_code=500, detail=f"获取活跃代理运行记录失败: {str(e)}")
+        raise HTTPException(
+            status_code=500, detail=f"获取活跃代理运行记录失败: {str(e)}"
+        )
 
 
 @router.get(
@@ -532,7 +537,9 @@ async def get_agent_runs(
 
 
 @router.get(
-    "/agent-run/{agent_run_id}", summary="获取代理运行记录", operation_id="get_agent_run"
+    "/agent-run/{agent_run_id}",
+    summary="获取代理运行记录",
+    operation_id="get_agent_run",
 )
 async def get_agent_run(
     agent_run_id: str, user_id: str = Depends(verify_and_get_user_id_from_jwt)

@@ -4,7 +4,6 @@ import traceback
 import uuid
 from datetime import datetime
 from typing import Optional
-from zoneinfo import ZoneInfo
 
 import dramatiq
 import structlog
@@ -24,6 +23,7 @@ logger.info(
 redis_broker = RedisBroker(
     host=app_config.REDIS_HOST,
     port=app_config.REDIS_PORT,
+    db=app_config.REDIS_DB,
     password=app_config.REDIS_PASSWORD,
     middleware=[dramatiq.middleware.AsyncIO()],
 )
@@ -115,7 +115,7 @@ async def run_agent_background(
         f"开始后台 Agent 运行: {agent_run_id}，线程: {thread_id} (实例: {instance_id})"
     )
 
-    start_time = datetime.now(ZoneInfo("Asia/Shanghai"))
+    start_time = datetime.now()
     total_responses = 0
     pubsub = None
     stop_checker = None
@@ -237,7 +237,7 @@ async def run_agent_background(
         if final_status == "running":
             final_status = "completed"
             duration = (
-                datetime.now(ZoneInfo("Asia/Shanghai")) - start_time
+                datetime.now() - start_time
             ).total_seconds()
             logger.info(
                 f"Agent 运行 {agent_run_id} 正常完成 (持续: {duration:.2f}秒, 响应数: {total_responses})"
@@ -278,7 +278,7 @@ async def run_agent_background(
         error_message = str(e)
         traceback_str = traceback.format_exc()
         duration = (
-            datetime.now(ZoneInfo("Asia/Shanghai")) - start_time
+            datetime.now() - start_time
         ).total_seconds()
         logger.error(
             f"Agent 运行 {agent_run_id} 运行 {duration:.2f}秒后出错: {error_message}\n{traceback_str} (实例: {instance_id})"
@@ -405,7 +405,7 @@ async def update_agent_run_status(
                     )
                     if agent_run:
                         agent_run.status = status
-                        agent_run.completed_at = datetime.now(ZoneInfo("Asia/Shanghai"))
+                        agent_run.completed_at = datetime.now()
                         if error:
                             agent_run.error = error
                         db.commit()

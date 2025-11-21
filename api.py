@@ -1,8 +1,11 @@
 import os
+import time
+import uuid
 from contextlib import asynccontextmanager
 
+import structlog
 import uvicorn
-from fastapi import APIRouter, FastAPI
+from fastapi import APIRouter, FastAPI, Request
 from loguru import logger
 
 from agent_runs import router as agent_runs_router
@@ -44,6 +47,50 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(lifespan=lifespan)
+
+
+@app.middleware("http")
+async def log_requests_middleware(request: Request, call_next):
+    structlog.contextvars.clear_contextvars()
+
+    request_id = str(uuid.uuid4())
+    start_time = time.time()
+    client_ip = request.client.host if request.client else "unknown"
+    method = request.method
+    path = request.url.path
+    query_params = str(request.query_params)
+
+    structlog.contextvars.bind_contextvars(
+        request_id=request_id,
+        client_ip=client_ip,
+        method=method,
+        path=path,
+        query_params=query_params,
+    )
+
+    # 记录请求开始
+    logger.debug(
+        f"请求开始: {method} {path} 来自 {client_ip} | 查询参数: {query_params}"
+    )
+
+    try:
+        response = await call_next(request)
+        process_time = time.time() - start_time
+        logger.debug(
+            f"请求完成: {method} {path} | 状态码: {response.status_code} | 耗时: {process_time:.2f}秒"
+        )
+        return response
+    except Exception as e:
+        process_time = time.time() - start_time
+        try:
+            error_str = str(e)
+        except Exception:
+            error_str = f"错误类型 {type(e).__name__}"
+        logger.error(
+            f"请求失败: {method} {path} | 错误: {error_str} | 耗时: {process_time:.2f}秒"
+        )
+        raise
+
 
 api_router = APIRouter()
 

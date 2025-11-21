@@ -296,7 +296,7 @@ class ResponseProcessor:
                 chunk_count += 1
 
                 # 跟踪时间
-                current_time = datetime.now(ZoneInfo("Asia/Shanghai")).timestamp()
+                current_time = datetime.now().timestamp()
                 if first_chunk_time is None:
                     first_chunk_time = current_time
                 last_chunk_time = current_time
@@ -374,7 +374,7 @@ class ResponseProcessor:
                         current_xml_content += chunk_content
 
                         # 仅生成内容块（不保存）
-                        now_chunk = datetime.now(ZoneInfo("Asia/Shanghai")).isoformat()
+                        now_chunk = datetime.now()
                         yield {
                             "sequence": __sequence,
                             "message_id": None,

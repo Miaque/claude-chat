@@ -44,7 +44,7 @@ async def generate_and_update_project_name(project_id: str, prompt: str):
             {"role": "user", "content": user_message},
         ]
 
-        logger.debug(f"为项目 {project_id} 的名称和图标选择调用LLM。")
+        logger.debug(f"开始生成项目 {project_id} 的名称和图标。")
         response = await make_llm_api_call(
             messages=messages,
             model_name=model_name,
@@ -70,7 +70,7 @@ async def generate_and_update_project_name(project_id: str, prompt: str):
                     if title:
                         generated_name = title.strip("'\" \n\t")
                         logger.debug(
-                            f"LLM为项目 {project_id} 生成的名称: '{generated_name}'"
+                            f"已生成项目 {project_id} 的名称: '{generated_name}'"
                         )
 
                     # 提取图标
@@ -78,16 +78,16 @@ async def generate_and_update_project_name(project_id: str, prompt: str):
                     if icon and icon in relevant_icons:
                         selected_icon = icon
                         logger.debug(
-                            f"LLM为项目 {project_id} 选择的图标: '{selected_icon}'"
+                            f"已选择项目 {project_id} 的图标: '{selected_icon}'"
                         )
                     else:
                         logger.warning(
-                            f"LLM为项目 {project_id} 选择了无效的图标 '{icon}'，使用默认的 'message-circle'"
+                            f"项目 {project_id} 选择了无效的图标 '{icon}'，使用默认的 'message-circle'"
                         )
                         selected_icon = "message-circle"
                 else:
                     logger.warning(
-                        f"LLM为项目 {project_id} 返回了非字典类型的JSON: {parsed_response}"
+                        f"项目 {project_id} 返回了非字典类型的JSON: {parsed_response}"
                     )
 
             except json.JSONDecodeError as e:

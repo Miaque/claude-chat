@@ -15,6 +15,7 @@ from core.services.wrappers import register_connection
 
 
 class JSONField(types.TypeDecorator):
+    """自定义JSON字段类型，用于在数据库中存储JSON数据。"""
     impl = types.Text
     cache_ok = True
 
@@ -49,13 +50,13 @@ def handle_peewee_migration(DATABASE_URL):
         db.close()
 
     except Exception as e:
-        logger.error(f"Failed to initialize the database connection: {e}")
+        logger.error(f"初始化数据库连接失败: {e}")
         logger.warning(
-            "Hint: If your database password contains special characters, you may need to URL-encode it."
+            "提示: 如果您的数据库密码包含特殊字符，您可能需要对其进行URL编码。"
         )
         raise
     finally:
-        # Properly closing the database connection
+        # 正确关闭数据库连接
         if db and not db.is_closed():
             db.close()
 
@@ -97,6 +98,7 @@ Session = scoped_session(SessionLocal)
 
 
 def get_session():
+    """获取数据库会话。"""
     db = SessionLocal()
     try:
         yield db

@@ -25,6 +25,7 @@ def initialize():
     redis_host = app_config.REDIS_HOST
     redis_port = app_config.REDIS_PORT
     redis_password = app_config.REDIS_PASSWORD
+    redis_db = app_config.REDIS_DB
 
     # 连接池配置 - 为生产环境优化
     max_connections = 128  # 生产环境的合理限制
@@ -40,6 +41,7 @@ def initialize():
     pool = redis.ConnectionPool(
         host=redis_host,
         port=redis_port,
+        db=redis_db,
         password=redis_password,
         decode_responses=True,
         socket_timeout=socket_timeout,
