@@ -1,4 +1,5 @@
 import json
+import uuid
 from typing import Any, Dict, List, Optional, Union
 
 
@@ -166,7 +167,7 @@ def format_for_yield(message_object: Dict[str, Any]) -> Dict[str, Any]:
         formatted["content"] = json.dumps(formatted["content"])
 
     # 确保 metadata 是 JSON 字符串
-    if "metadata" in formatted and not isinstance(formatted["metadata"], str):
-        formatted["metadata"] = json.dumps(formatted["metadata"])
+    if "meta" in formatted and not isinstance(formatted["meta"], str):
+        formatted["meta"] = json.dumps(formatted["meta"])
 
     return formatted

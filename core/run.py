@@ -43,7 +43,7 @@ class PromptManager:
         else:
             system_content = default_system_content
 
-        now = datetime.datetime.now(datetime.timezone.utc)
+        now = datetime.datetime.now()
         datetime_info = f"\n\n=== 当前日期/时间信息 ===\n"
         datetime_info += f"今天的日期: {now.strftime('%A, %B %d, %Y')}\n"
         datetime_info += f"当前年份: {now.strftime('%Y')}\n"
@@ -234,7 +234,7 @@ class AgentRunner:
                                         continue
 
                                     # 检查代理终止
-                                    metadata = chunk.get("metadata", {})
+                                    metadata = chunk.get("meta", {})
                                     if isinstance(metadata, str):
                                         metadata = json.loads(metadata)
 

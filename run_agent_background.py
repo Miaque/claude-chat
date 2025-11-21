@@ -15,6 +15,7 @@ from configs import app_config
 from core.run import run_agent
 from core.services import redis
 from core.services.db import get_db
+from core.utils.json_helpers import to_json_string
 from models.agent_run import AgentRun
 
 logger.info(
@@ -204,7 +205,7 @@ async def run_agent_background(
 
         async for response in agent_gen:
             if stop_signal_received:
-                logger.debug(f"Agent 运行 {agent_run_id} 已被信号停止。")
+                logger.debug(f"代理运行 {agent_run_id} 已被信号终止。")
                 final_status = "stopped"
                 break
 
@@ -329,7 +330,7 @@ async def run_agent_background(
         await _cleanup_redis_response_list(agent_run_id)
 
         # 移除实例特定的活动运行键
-        await _cleanup_redis_instance_key(agent_run_id)
+        await _cleanup_redis_instance_key(agent_run_id, instance_id)
 
         # 清理运行锁
         await _cleanup_redis_run_lock(agent_run_id)
@@ -347,7 +348,7 @@ async def run_agent_background(
         )
 
 
-async def _cleanup_redis_instance_key(agent_run_id: str):
+async def _cleanup_redis_instance_key(agent_run_id: str, instance_id: str):
     """清理 Agent 运行的实例特定 Redis 键。"""
     if not instance_id:
         logger.warning("实例 ID 未设置，无法清理实例键。")

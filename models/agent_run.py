@@ -3,7 +3,7 @@ from datetime import datetime
 from typing import Literal, Optional
 from uuid import uuid4
 
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict
 from sqlalchemy import TEXT, UUID, Column, DateTime
 from sqlalchemy.dialects.postgresql import JSONB
 
@@ -39,5 +39,8 @@ class AgentRunModel(BaseModel):
     agent_version_id: Optional[uuid.UUID] = None
     meta: Optional[dict] = {}
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(
+        from_attributes=True,
+        extra="ignore",
+        json_encoders={datetime: lambda dt: dt.strftime("%Y-%m-%d %H:%M:%S")},
+    )

@@ -1,8 +1,10 @@
 import asyncio
 import json
+from datetime import datetime
 from typing import Any, AsyncGenerator, Dict, List, Literal, Optional, Type, Union, cast
 
 from loguru import logger
+from sqlalchemy import select
 
 from core.error_processor import ErrorProcessor
 from core.response_processor import ProcessorConfig, ResponseProcessor
@@ -86,12 +88,15 @@ class ThreadManager:
         """向线程中添加消息到数据库。"""
         # logger.debug(f"向线程 {thread_id} 添加类型为 '{type}' 的消息")
 
+        current_time = datetime.now()
         data_to_insert = {
             "thread_id": thread_id,
             "type": type,
             "content": content,
             "is_llm_message": is_llm_message,
-            "metadata": metadata or {},
+            "meta": metadata or {},
+            "created_at": current_time,
+            "updated_at": current_time,
         }
 
         if agent_id:
@@ -109,12 +114,12 @@ class ThreadManager:
             if message:
                 saved_message = MessageModel.model_validate(message)
 
-                return saved_message
+                return saved_message.model_dump(mode="json")
             else:
                 logger.error(f"线程 {thread_id} 的插入操作失败")
                 return None
         except Exception as e:
-            logger.error(f"向线程 {thread_id} 添加消息失败: {str(e)}", exc_info=True)
+            logger.exception(f"向线程 {thread_id} 添加消息失败")
             raise
 
     async def get_llm_messages(self, thread_id: str) -> List[Dict[str, Any]]:
@@ -129,17 +134,20 @@ class ThreadManager:
             while True:
                 with get_db() as db:
                     result = (
-                        db.query(
-                            Message.message_id,
-                            Message.type,
-                            Message.content,
-                            Message.metadata,
+                        db.execute(
+                            select(
+                                Message.message_id,
+                                Message.type,
+                                Message.content,
+                                Message.meta,
+                            )
+                            .filter(Message.thread_id == thread_id)
+                            .filter(Message.is_llm_message == True)
+                            .order_by(Message.created_at)
+                            .offset(offset)
+                            .limit(batch_size)
                         )
-                        .filter(Message.thread_id == thread_id)
-                        .filter(Message.is_llm_message == True)
-                        .order_by(Message.created_at)
-                        .offset(offset)
-                        .limit(batch_size)
+                        .mappings()
                         .all()
                     )
 
@@ -158,16 +166,7 @@ class ThreadManager:
             for item in all_messages:
                 # 检查此消息在元数据中是否有压缩版本
                 content = item["content"]
-                metadata = item.get("metadata", {})
-                is_compressed = False
-
-                # 如果已压缩，对LLM使用compressed_content而不是完整内容
-                if isinstance(metadata, dict) and metadata.get("compressed"):
-                    compressed_content = metadata.get("compressed_content")
-                    if compressed_content:
-                        content = compressed_content
-                        is_compressed = True
-                        # logger.debug(f"对消息 {item['message_id']} 使用压缩内容")
+                metadata = item.get("meta", {})
 
                 # 解析内容并添加message_id
                 if isinstance(content, str):
@@ -176,28 +175,15 @@ class ThreadManager:
                         parsed_item["message_id"] = item["message_id"]
                         messages.append(parsed_item)
                     except json.JSONDecodeError:
-                        # 如果已压缩，内容是纯字符串(不是JSON) - 这是预期的
-                        if is_compressed:
-                            messages.append(
-                                {
-                                    "role": "user",
-                                    "content": content,
-                                    "message_id": item["message_id"],
-                                }
-                            )
-                        else:
-                            logger.error(f"解析消息失败: {content[:100]}")
+                        logger.error(f"解析消息失败: {content[:100]}")
                 else:
-                    content["message_id"] = item["message_id"]
+                    content["message_id"] = str(item["message_id"])
                     messages.append(content)
 
             return messages
 
         except Exception as e:
-            logger.error(
-                f"获取线程 {thread_id} 的消息失败: {str(e)}",
-                exc_info=True,
-            )
+            logger.exception(f"获取线程 {thread_id} 的消息失败")
             return []
 
     async def run_thread(

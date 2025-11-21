@@ -15,9 +15,9 @@
             "args": [
                 "--skip-logging",
                 "--processes",
-                "4",
+                "1",
                 "--threads",
-                "4",
+                "1",
                 "run_agent_background"
             ]
         },

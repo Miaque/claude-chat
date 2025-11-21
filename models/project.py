@@ -3,7 +3,7 @@ from datetime import datetime
 from typing import Optional
 from uuid import uuid4
 
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict
 from sqlalchemy import UUID, Boolean, Column, DateTime, Text
 from sqlalchemy.dialects.postgresql import JSONB
 
@@ -34,3 +34,9 @@ class ProjectModel(BaseModel):
     created_at: datetime
     updated_at: datetime
     icon_name: Optional[str] = None
+
+    model_config = ConfigDict(
+        from_attributes=True,
+        extra="ignore",
+        json_encoders={datetime: lambda dt: dt.strftime("%Y-%m-%d %H:%M:%S")},
+    )

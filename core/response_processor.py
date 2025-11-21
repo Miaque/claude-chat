@@ -262,7 +262,7 @@ class ResponseProcessor:
                 "llm_response_id": llm_response_id,
                 "auto_continue_count": auto_continue_count,
                 "model": llm_model,
-                "timestamp": datetime.now(timezone.utc).isoformat(),
+                "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
             }
             llm_start_msg_obj = await self.add_message(
                 thread_id=thread_id,

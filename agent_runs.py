@@ -99,14 +99,14 @@ class ThreadAgentResponse(BaseModel):
 
 async def _get_agent_run_with_access_check(agent_run_id: str, user_id: str):
     """ "
-    获取代理运行记录并验证用户是否有访问权限。
+    获取代理运行并验证用户是否有访问权限。
     """
 
     with get_db() as db:
         agent_run = db.query(AgentRun).filter(AgentRun.id == agent_run_id).first()
 
     if not agent_run:
-        raise HTTPException(status_code=404, detail="未找到代理运行记录")
+        raise HTTPException(status_code=404, detail="未找到代理运行")
 
     agent_run_data = AgentRunModel.model_validate(agent_run)
     return agent_run_data.model_dump()
@@ -118,7 +118,7 @@ async def _get_effective_model(model_name: Optional[str], account_id: str) -> st
 
 async def _create_agent_run_record(thread_id: str, effective_model: str) -> str:
     """
-    在数据库中创建代理运行记录。
+    在数据库中创建代理运行
 
     参数:
         client: 数据库客户端
@@ -149,14 +149,14 @@ async def _create_agent_run_record(thread_id: str, effective_model: str) -> str:
 
     agent_run_id = str(agent_run.id)
     structlog.contextvars.bind_contextvars(agent_run_id=agent_run_id)
-    logger.debug(f"创建新的代理运行记录: {agent_run_id}")
+    logger.debug(f"创建新的代理运行: {agent_run_id}")
 
     # 在Redis中注册运行
     instance_key = f"active_run:{core_utils.instance_id}:{agent_run_id}"
     try:
         await redis.set(instance_key, "running", ex=redis.REDIS_KEY_TTL)
     except Exception as e:
-        logger.warning(f"在Redis中注册代理运行记录失败 ({instance_key}): {str(e)}")
+        logger.warning(f"在Redis中注册代理运行失败 ({instance_key}): {str(e)}")
 
     return agent_run_id
 
