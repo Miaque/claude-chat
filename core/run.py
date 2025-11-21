@@ -2,14 +2,18 @@ import asyncio
 import datetime
 import json
 from dataclasses import dataclass
-from typing import Any, AsyncGenerator, Dict, List, Optional
+from typing import Any, AsyncGenerator, Dict, Optional
 
 from loguru import logger
 
 from core.error_processor import ErrorProcessor
 from core.prompts.prompt import get_system_prompt
 from core.response_processor import ProcessorConfig
+from core.services.db import get_db
 from core.thread_manager import ThreadManager
+from models.message import Message
+from models.project import Project, ProjectModel
+from models.thread import Thread
 
 
 @dataclass
@@ -28,7 +32,6 @@ class PromptManager:
         model_name: str,
         agent_config: Optional[dict],
         thread_id: str,
-        client=None,
         tool_registry=None,
         user_id: Optional[str] = None,
     ) -> dict:
@@ -53,14 +56,14 @@ class PromptManager:
         system_content += datetime_info
 
         # 如果提供了user_id，添加用户地区上下文
-        if user_id and client:
+        if user_id:
             try:
                 from core.utils.user_locale import (
                     get_locale_context_prompt,
                     get_user_locale,
                 )
 
-                locale = await get_user_locale(user_id, client)
+                locale = await get_user_locale(user_id)
                 locale_prompt = get_locale_context_prompt(locale)
                 system_content += f"\n\n{locale_prompt}\n"
                 logger.debug(
@@ -80,37 +83,36 @@ class AgentRunner:
     async def setup(self):
         self.thread_manager = ThreadManager(agent_config=self.config.agent_config)
 
-        self.client = await self.thread_manager.db.client
+        with get_db() as db:
+            response = (
+                db.query(Thread.account_id)
+                .filter(Thread.thread_id == self.config.thread_id)
+                .first()
+            )
 
-        response = (
-            await self.client.table("threads")
-            .select("account_id")
-            .eq("thread_id", self.config.thread_id)
-            .execute()
-        )
-
-        if not response.data or len(response.data) == 0:
+        if not response:
             raise ValueError(f"未找到线程 {self.config.thread_id}")
 
-        self.account_id = response.data[0].get("account_id")
+        self.account_id = response.account_id
 
         if not self.account_id:
             raise ValueError(f"线程 {self.config.thread_id} 没有关联的账户")
 
-        project = (
-            await self.client.table("projects")
-            .select("*")
-            .eq("project_id", self.config.project_id)
-            .execute()
-        )
-        if not project.data or len(project.data) == 0:
+        with get_db() as db:
+            project = (
+                db.query(Project)
+                .filter(Project.project_id == self.config.project_id)
+                .first()
+            )
+
+        if not project:
             raise ValueError(f"未找到项目 {self.config.project_id}")
 
-        project_data = project.data[0]
-        sandbox_info = project_data.get("sandbox", {})
+        project_data = ProjectModel.model_validate(project)
+        sandbox_info = project_data.sandbox
         if not sandbox_info.get("id"):
             logger.debug(
-                f"未找到项目 {self.config.project_id} 的沙盒；将在需要时延迟创建"
+                f"未找到项目 {self.config.project_id} 的sandbox；将在需要时延迟创建"
             )
 
     async def run(
@@ -122,7 +124,6 @@ class AgentRunner:
             self.config.model_name,
             self.config.agent_config,
             self.config.thread_id,
-            self.client,
             # tool_registry=self.thread_manager.tool_registry,
             user_id=self.account_id,
         )
@@ -133,18 +134,18 @@ class AgentRunner:
         iteration_count = 0
         continue_execution = True
 
-        latest_user_message = (
-            await self.client.table("messages")
-            .select("*")
-            .eq("thread_id", self.config.thread_id)
-            .eq("type", "user")
-            .order("created_at", desc=True)
-            .limit(1)
-            .execute()
-        )
+        with get_db() as db:
+            latest_user_message = (
+                db.query(Message)
+                .filter(Message.thread_id == self.config.thread_id)
+                .filter(Message.type == "user")
+                .order_by(Message.created_at.desc())
+                .first()
+            )
+
         latest_user_message_content = None
-        if latest_user_message.data and len(latest_user_message.data) > 0:
-            data = latest_user_message.data[0]["content"]
+        if latest_user_message:
+            data = latest_user_message.content
             if isinstance(data, str):
                 data = json.loads(data)
             # 提取内容用于快速路径优化
@@ -155,17 +156,17 @@ class AgentRunner:
         while continue_execution and iteration_count < self.config.max_iterations:
             iteration_count += 1
 
-            latest_message = (
-                await self.client.table("messages")
-                .select("*")
-                .eq("thread_id", self.config.thread_id)
-                .in_("type", ["assistant", "tool", "user"])
-                .order("created_at", desc=True)
-                .limit(1)
-                .execute()
-            )
-            if latest_message.data and len(latest_message.data) > 0:
-                message_type = latest_message.data[0].get("type")
+            with get_db() as db:
+                latest_message = (
+                    db.query(Message)
+                    .filter(Message.thread_id == self.config.thread_id)
+                    .filter(Message.type.in_(["assistant", "tool", "user"]))
+                    .order_by(Message.created_at.desc())
+                    .first()
+                )
+
+            if latest_message:
+                message_type = latest_message.type
                 if message_type == "assistant":
                     continue_execution = False
                     break

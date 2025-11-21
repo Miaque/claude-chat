@@ -39,21 +39,19 @@ class ReconnectingPostgresqlDatabase(CustomReconnectMixin, PostgresqlDatabase):
 
 
 def register_connection(db_url):
-    # Standard database connection (existing logic)
     db = connect(db_url, unquote_user=True, unquote_password=True)
     if isinstance(db, PostgresqlDatabase):
-        # Enable autoconnect for SQLite databases, managed by Peewee
         db.autoconnect = True
         db.reuse_if_open = True
-        logger.info("Connected to PostgreSQL database")
+        logger.info("已连接到 PostgreSQL 数据库")
 
-        # Get the connection details
+        # 获取连接详情
         connection = parse(db_url, unquote_user=True, unquote_password=True)
 
-        # Use our custom database class that supports reconnection
+        # 使用支持重连的自定义数据库类
         db = ReconnectingPostgresqlDatabase(**connection)
         db.connect(reuse_if_open=True)
     else:
-        raise ValueError("Unsupported database connection")
+        raise ValueError("不支持的数据库连接类型")
 
     return db

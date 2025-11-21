@@ -3,7 +3,7 @@ SUPPORTED_LOCALES = ["en", "de", "it", "zh", "ja", "pt", "fr", "es"]
 DEFAULT_LOCALE = "zh"
 
 
-async def get_user_locale(user_id: str, client=None) -> str:
+async def get_user_locale(user_id: str) -> str:
     return DEFAULT_LOCALE
 
 
