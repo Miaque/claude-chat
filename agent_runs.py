@@ -1,11 +1,9 @@
 import asyncio
 import json
-import os
 import traceback
 import uuid
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
-from zoneinfo import ZoneInfo
 
 import structlog
 from fastapi import (
@@ -40,7 +38,7 @@ router = APIRouter(tags=["agent-runs"])
 
 
 class UnifiedAgentStartResponse(BaseModel):
-    """Unified response model for agent start (both new and existing threads)."""
+    """统一代理启动响应模型（新线程和现有线程）"""
 
     thread_id: str
     agent_run_id: str
@@ -48,7 +46,7 @@ class UnifiedAgentStartResponse(BaseModel):
 
 
 class AgentVersionResponse(BaseModel):
-    """Response model for agent version information."""
+    """代理版本信息响应模型"""
 
     version_id: str
     agent_id: str
@@ -66,14 +64,12 @@ class AgentVersionResponse(BaseModel):
 
 
 class AgentResponse(BaseModel):
-    """Response model for agent information."""
+    """代理信息响应模型"""
 
     agent_id: str
     name: str
     description: Optional[str] = None
-    system_prompt: Optional[str] = (
-        None  # Optional for list operations where config not loaded
-    )
+    system_prompt: Optional[str] = None  # 列表操作可选，未加载配置时
     model: Optional[str] = None
     configured_mcps: List[Dict[str, Any]]
     custom_mcps: List[Dict[str, Any]]
@@ -90,13 +86,11 @@ class AgentResponse(BaseModel):
     version_count: Optional[int] = 1
     current_version: Optional[AgentVersionResponse] = None
     metadata: Optional[Dict[str, Any]] = None
-    account_id: Optional[str] = (
-        None  # Internal field, may not always be needed in response
-    )
+    account_id: Optional[str] = None  # 内部字段，响应中可能不需要
 
 
 class ThreadAgentResponse(BaseModel):
-    """Response model for thread agent information."""
+    """线程代理信息响应模型"""
 
     agent: Optional[AgentResponse]
     source: str
@@ -104,17 +98,15 @@ class ThreadAgentResponse(BaseModel):
 
 
 async def _get_agent_run_with_access_check(agent_run_id: str, user_id: str):
-    """
-    Get an agent run and verify the user has access to it.
-
-    Internal helper for this module only.
+    """"
+    获取代理运行记录并验证用户是否有访问权限。
     """
 
     with get_db() as db:
         agent_run = db.query(AgentRun).filter(AgentRun.id == agent_run_id).first()
 
     if not agent_run:
-        raise HTTPException(status_code=404, detail="Agent run not found")
+        raise HTTPException(status_code=404, detail="未找到代理运行记录")
 
     agent_run_data = AgentRunModel.model_validate(agent_run)
     return agent_run_data.model_dump()
@@ -126,23 +118,23 @@ async def _get_effective_model(model_name: Optional[str], account_id: str) -> st
 
 async def _create_agent_run_record(thread_id: str, effective_model: str) -> str:
     """
-    Create an agent run record in the database.
+    在数据库中创建代理运行记录。
 
-    Args:
-        client: Database client
-        thread_id: Thread ID to associate with
-        agent_config: Agent configuration dict
-        effective_model: Model name to use
+    参数:
+        client: 数据库客户端
+        thread_id: 关联的线程ID
+        agent_config: 代理配置字典
+        effective_model: 使用的模型名称
 
-    Returns:
-        agent_run_id: The created agent run ID
+    返回:
+        agent_run_id: 创建的代理运行记录ID
     """
     with get_db() as db:
         agent_run = AgentRun(
             **{
                 "thread_id": thread_id,
                 "status": "running",
-                "started_at": datetime.now(timezone.utc).isoformat(),
+                "started_at": datetime.now(),
                 "agent_id": None,
                 "agent_version_id": None,
                 "meta": {"model_name": effective_model},
@@ -154,16 +146,14 @@ async def _create_agent_run_record(thread_id: str, effective_model: str) -> str:
 
     agent_run_id = str(agent_run.id)
     structlog.contextvars.bind_contextvars(agent_run_id=agent_run_id)
-    logger.debug(f"Created new agent run: {agent_run_id}")
+    logger.debug(f"创建新的代理运行记录: {agent_run_id}")
 
-    # Register run in Redis
+    # 在Redis中注册运行
     instance_key = f"active_run:{core_utils.instance_id}:{agent_run_id}"
     try:
         await redis.set(instance_key, "running", ex=redis.REDIS_KEY_TTL)
     except Exception as e:
-        logger.warning(
-            f"Failed to register agent run in Redis ({instance_key}): {str(e)}"
-        )
+        logger.warning(f"在Redis中注册代理运行记录失败 ({instance_key}): {str(e)}")
 
     return agent_run_id
 
@@ -176,14 +166,14 @@ async def _trigger_agent_background(
     agent_config: Optional[dict],
 ):
     """
-    Trigger the background agent execution.
+    触发后台代理执行。
 
-    Args:
-        agent_run_id: Agent run ID
-        thread_id: Thread ID
-        project_id: Project ID
-        effective_model: Model name to use
-        agent_config: Agent configuration dict
+    参数:
+        agent_run_id: 代理运行记录ID
+        thread_id: 线程ID
+        project_id: 项目ID
+        effective_model: 模型名称
+        agent_config: 代理配置字典
     """
     request_id = structlog.contextvars.get_contextvars().get("request_id")
 
@@ -201,7 +191,7 @@ async def _trigger_agent_background(
 @router.post(
     "/agent/start",
     response_model=UnifiedAgentStartResponse,
-    summary="Start Agent (Unified)",
+    summary="启动代理（统一接口）",
     operation_id="unified_agent_start",
 )
 async def unified_agent_start(
@@ -213,44 +203,40 @@ async def unified_agent_start(
     user_id: str = Depends(verify_and_get_user_id_from_jwt),
 ):
     """
-    Unified endpoint to start an agent run.
+    统一接口启动代理运行。
 
-    - If thread_id is provided: Starts agent on existing thread (with optional prompt and files)
-    - If thread_id is NOT provided: Creates new project/thread and starts agent
+    - 如果提供 thread_id：在现有线程上启动代理（可选用户输入和文件）
+    - 如果未提供 thread_id：创建新项目和线程并启动代理
 
-    Supports file uploads for both new and existing threads.
+    支持新线程和现有线程的文件上传。
     """
     if not core_utils.instance_id:
-        raise HTTPException(
-            status_code=500, detail="Agent API not initialized with instance ID"
-        )
+        raise HTTPException(status_code=500, detail="代理API服务端未初始化实例ID")
 
     account_id = user_id
 
-    # Debug logging - log what we received
+    # 调试日志 - 记录接收到的参数
     logger.debug(
-        f"Received agent start request: thread_id={thread_id!r}, prompt={prompt[:100] if prompt else None!r}, model_name={model_name!r}, agent_id={agent_id!r}, files_count={len(files)}"
+        f"接收到代理启动请求: thread_id={thread_id!r}, prompt={prompt[:100] if prompt else None!r}, model_name={model_name!r}, agent_id={agent_id!r}, files_count={len(files)}"
     )
     logger.debug(
-        f"Parameter types: thread_id={type(thread_id)}, prompt={type(prompt)}, model_name={type(model_name)}, agent_id={type(agent_id)}"
+        f"参数类型: thread_id={type(thread_id)}, prompt={type(prompt)}, model_name={type(model_name)}, agent_id={type(agent_id)}"
     )
 
-    # Additional validation logging
+    # 额外的验证日志
     if not thread_id and (
         not prompt or (isinstance(prompt, str) and not prompt.strip())
     ):
-        error_msg = f"VALIDATION ERROR: New thread requires prompt. Received: prompt={prompt!r} (type={type(prompt)}), thread_id={thread_id!r}"
+        error_msg = f"验证错误: 新线程需要提供用户输入。接收到: prompt={prompt!r} (类型={type(prompt)}), thread_id={thread_id!r}"
         logger.error(error_msg)
-        raise HTTPException(
-            status_code=400, detail="prompt is required when creating a new thread"
-        )
+        raise HTTPException(status_code=400, detail="创建新线程时需要提供用户输入")
 
     try:
         if thread_id:
-            logger.debug(f"Starting agent on existing thread: {thread_id}")
+            logger.debug(f"在已有线程上启动代理: {thread_id}")
             structlog.contextvars.bind_contextvars(thread_id=thread_id)
 
-            # Validate thread exists and get metadata
+            # 验证线程存在并获取元数据
             with get_db() as db:
                 thread_result = (
                     db.query(Thread.project_id, Thread.account_id, Thread.meta)
@@ -259,7 +245,7 @@ async def unified_agent_start(
                 )
 
             if not thread_result:
-                raise HTTPException(status_code=404, detail="Thread not found")
+                raise HTTPException(status_code=404, detail="未找到线程")
 
             thread_data = ThreadModel.model_validate(thread_result)
             project_id = str(thread_data.project_id)
@@ -272,11 +258,11 @@ async def unified_agent_start(
                 thread_metadata=thread_metadata,
             )
 
-            # Get effective model
+            # 获取有效模型
             effective_model = await _get_effective_model(model_name, thread_account_id)
 
             if prompt:
-                # No files, but prompt provided - create user message
+                # 没有文件但提供了用户输入 - 创建用户消息
                 message_id = str(uuid.uuid4())
                 message_payload = {"role": "user", "content": prompt}
                 with get_db() as db:
@@ -293,12 +279,12 @@ async def unified_agent_start(
                     db.add(message)
                     db.commit()
 
-                logger.debug(f"Created user message for thread {thread_id}")
+                logger.debug(f"为线程 {thread_id} 创建用户消息")
 
-            # Create agent run
+            # 创建代理运行记录
             agent_run_id = await _create_agent_run_record(thread_id, effective_model)
 
-            # Trigger background execution
+            # 触发后台执行
             await _trigger_agent_background(
                 agent_run_id, thread_id, project_id, effective_model, agent_config={}
             )
@@ -310,22 +296,22 @@ async def unified_agent_start(
             }
 
         else:
-            # Validate that prompt is provided for new threads
+            # 验证新线程是否提供了用户输入
             if not prompt or (isinstance(prompt, str) and not prompt.strip()):
                 logger.error(
-                    f"Validation failed: prompt is required for new threads. Received prompt={prompt!r}, type={type(prompt)}"
+                    f"验证失败: 新线程需要提供用户输入。接收到 prompt={prompt!r}, 类型={type(prompt)}"
                 )
                 raise HTTPException(
                     status_code=400,
-                    detail="prompt is required when creating a new thread",
+                    detail="创建新线程时需要提供用户输入",
                 )
 
-            logger.debug(f"Creating new thread with prompt and {len(files)} files")
+            logger.debug(f"使用用户输入和 {len(files)} 个文件创建新线程")
 
-            # Get effective model
+            # 获取有效模型
             effective_model = await _get_effective_model(model_name, account_id)
 
-            # Create Project
+            # 创建项目
             placeholder_name = f"{prompt[:30]}..." if len(prompt) > 30 else prompt
             with get_db() as db:
                 current_time = datetime.now()
@@ -343,9 +329,9 @@ async def unified_agent_start(
                 db.refresh(project)
 
             project_id = str(project.project_id)
-            logger.info(f"Created new project: {project_id}")
+            logger.info(f"创建新项目: {project_id}")
 
-            # Create Thread
+            # 创建线程
             current_time = datetime.now()
             thread_data = {
                 "thread_id": str(uuid.uuid4()),
@@ -368,17 +354,17 @@ async def unified_agent_start(
                 db.refresh(thread)
 
             thread_id = str(thread.thread_id)
-            logger.debug(f"Created new thread: {thread_id}")
+            logger.debug(f"创建新线程: {thread_id}")
 
-            # Trigger background naming task
+            # 触发后台命名任务
             asyncio.create_task(
                 generate_and_update_project_name(project_id=project_id, prompt=prompt)
             )
 
-            # Handle file uploads and create user message
+            # 处理文件上传并创建用户消息
             message_content = prompt
 
-            # Create initial user message
+            # 创建初始用户消息
             message_id = str(uuid.uuid4())
             message_payload = {"role": "user", "content": message_content}
             with get_db() as db:
@@ -397,10 +383,10 @@ async def unified_agent_start(
                 db.add(message)
                 db.commit()
 
-            # Create agent run
+            # 创建代理运行记录
             agent_run_id = await _create_agent_run_record(thread_id, effective_model)
 
-            # Trigger background execution
+            # 触发后台执行
             await _trigger_agent_background(
                 agent_run_id, thread_id, project_id, effective_model, agent_config={}
             )
@@ -414,32 +400,30 @@ async def unified_agent_start(
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(
-            f"Error in unified agent start: {str(e)}\n{traceback.format_exc()}"
-        )
-        # Log the actual error details for debugging
+        logger.error(f"统一代理启动失败: {str(e)}\n{traceback.format_exc()}")
+        # 记录实际错误详情用于调试
         error_details = {
             "error": str(e),
             "error_type": type(e).__name__,
             "traceback": traceback.format_exc(),
         }
-        logger.error(f"Full error details: {error_details}")
-        raise HTTPException(status_code=500, detail=f"Failed to start agent: {str(e)}")
+        logger.error(f"完整错误详情: {error_details}")
+        raise HTTPException(status_code=500, detail=f"代理启动失败: {str(e)}")
 
 
 @router.post(
     "/agent-run/{agent_run_id}/stop",
-    summary="Stop Agent Run",
+    summary="停止运行中的代理",
     operation_id="stop_agent_run",
 )
 async def stop_agent(
     agent_run_id: str, user_id: str = Depends(verify_and_get_user_id_from_jwt)
 ):
-    """Stop a running agent."""
+    """停止正在运行的代理。"""
     structlog.contextvars.bind_contextvars(
         agent_run_id=agent_run_id,
     )
-    logger.debug(f"Received request to stop agent run: {agent_run_id}")
+    logger.debug(f"接收到停止代理运行的请求: {agent_run_id}")
     await _get_agent_run_with_access_check(agent_run_id, user_id)
     await stop_agent_run(agent_run_id)
     return {"status": "stopped"}
@@ -447,18 +431,18 @@ async def stop_agent(
 
 @router.get(
     "/agent-runs/active",
-    summary="List All Active Agent Runs",
+    summary="列出所有正在运行的代理",
     operation_id="list_active_agent_runs",
 )
 async def get_active_agent_runs(
     user_id: str = Depends(verify_and_get_user_id_from_jwt),
 ):
-    """Get all active (running) agent runs for the current user across all threads."""
+    """获取当前用户所有线程中的正在运行的代理。"""
     try:
-        logger.debug(f"Fetching all active agent runs for user: {user_id}")
+        logger.debug(f"获取用户所有正在运行的代理: {user_id}")
 
-        # Query all running agent runs where the thread belongs to the user
-        # Join with threads table to filter by account_id
+        # 查询所有运行中的代理运行，其中线程属于该用户
+        # 与threads表连接以按account_id过滤
         with get_db() as db:
             agent_runs = (
                 db.query(
@@ -474,11 +458,11 @@ async def get_active_agent_runs(
         if not agent_runs:
             return {"active_runs": []}
 
-        # Filter agent runs to only include those from threads the user has access to
-        # Get thread_ids and check access
+        # 过滤代理运行，仅包含用户有访问权限的
+        # 获取thread_ids并检查访问权限
         thread_ids = [run.thread_id for run in agent_runs]
 
-        # Get threads that belong to the user
+        # 获取属于用户的线程
         with get_db() as db:
             threads = (
                 db.query(Thread)
@@ -487,10 +471,10 @@ async def get_active_agent_runs(
                 .all()
             )
 
-        # Create a set of accessible thread IDs
+        # 创建可访问线程ID的集合
         accessible_thread_ids = {thread.thread_id for thread in threads}
 
-        # Filter agent runs to only include accessible ones
+        # 过滤代理运行，仅包含可访问的
         accessible_runs = [
             {
                 "id": run.id,
@@ -502,34 +486,30 @@ async def get_active_agent_runs(
             if run.thread_id in accessible_thread_ids
         ]
 
-        logger.debug(
-            f"Found {len(accessible_runs)} active agent runs for user: {user_id}"
-        )
+        logger.debug(f"找到 {len(accessible_runs)} 个用户的活跃代理运行记录: {user_id}")
         return {"active_runs": accessible_runs}
     except HTTPException:
         raise
     except Exception as e:
         logger.error(
-            f"Error fetching active agent runs for user {user_id}: {str(e)}\n{traceback.format_exc()}"
+            f"获取用户 {user_id} 活跃代理运行记录时出错: {str(e)}\n{traceback.format_exc()}"
         )
-        raise HTTPException(
-            status_code=500, detail=f"Failed to fetch active agent runs: {str(e)}"
-        )
+        raise HTTPException(status_code=500, detail=f"获取活跃代理运行记录失败: {str(e)}")
 
 
 @router.get(
     "/thread/{thread_id}/agent-runs",
-    summary="List Thread Agent Runs",
+    summary="列出线程的代理运行记录",
     operation_id="list_thread_agent_runs",
 )
 async def get_agent_runs(
     thread_id: str, user_id: str = Depends(verify_and_get_user_id_from_jwt)
 ):
-    """Get all agent runs for a thread."""
+    """获取线程的所有代理运行记录。"""
     structlog.contextvars.bind_contextvars(
         thread_id=thread_id,
     )
-    logger.debug(f"Fetching agent runs for thread: {thread_id}")
+    logger.debug(f"获取线程的代理运行记录: {thread_id}")
     # await verify_and_authorize_thread_access(thread_id, user_id)
     with get_db() as db:
         agent_runs = (
@@ -547,23 +527,23 @@ async def get_agent_runs(
             .order_by(AgentRun.created_at.desc())
             .all()
         )
-    logger.debug(f"Found {len(agent_runs)} agent runs for thread: {thread_id}")
+    logger.debug(f"找到 {len(agent_runs)} 个线程的代理运行记录: {thread_id}")
     return {"agent_runs": agent_runs}
 
 
 @router.get(
-    "/agent-run/{agent_run_id}", summary="Get Agent Run", operation_id="get_agent_run"
+    "/agent-run/{agent_run_id}", summary="获取代理运行记录", operation_id="get_agent_run"
 )
 async def get_agent_run(
     agent_run_id: str, user_id: str = Depends(verify_and_get_user_id_from_jwt)
 ):
-    """Get agent run status and responses."""
+    """获取代理运行状态和响应。"""
     structlog.contextvars.bind_contextvars(
         agent_run_id=agent_run_id,
     )
-    logger.debug(f"Fetching agent run details: {agent_run_id}")
+    logger.debug(f"获取代理运行详情: {agent_run_id}")
     agent_run_data = await _get_agent_run_with_access_check(agent_run_id, user_id)
-    # Note: Responses are not included here by default, they are in the stream or DB
+    # 注意: 响应默认不包含在此，它们在流或数据库中
     return {
         "id": agent_run_data["id"],
         "threadId": agent_run_data["thread_id"],
@@ -576,19 +556,19 @@ async def get_agent_run(
 
 @router.get(
     "/agent-run/{agent_run_id}/stream",
-    summary="Stream Agent Run",
+    summary="流式代理运行",
     operation_id="stream_agent_run",
 )
 async def stream_agent_run(
     agent_run_id: str, token: Optional[str] = None, request: Request = None
 ):
-    """Stream the responses of an agent run using Redis Lists and Pub/Sub."""
-    logger.debug(f"Starting stream for agent run: {agent_run_id}")
+    """使用Redis列表和发布/订阅流式传输代理运行的响应。"""
+    logger.debug(f"开始代理运行的流式传输: {agent_run_id}")
 
-    user_id = await get_user_id_from_stream_auth(request, token)  # practically instant
+    user_id = await get_user_id_from_stream_auth(request, token)  # 实际上瞬间完成
     agent_run_data = await _get_agent_run_with_access_check(
         agent_run_id, user_id
-    )  # 1 db query
+    )  # 1次数据库查询
 
     structlog.contextvars.bind_contextvars(
         agent_run_id=agent_run_id,
@@ -597,38 +577,38 @@ async def stream_agent_run(
 
     response_list_key = f"agent_run:{agent_run_id}:responses"
     response_channel = f"agent_run:{agent_run_id}:new_response"
-    control_channel = f"agent_run:{agent_run_id}:control"  # Global control channel
+    control_channel = f"agent_run:{agent_run_id}:control"  # 全局控制通道
 
     async def stream_generator(agent_run_data):
         logger.debug(
-            f"Streaming responses for {agent_run_id} using Redis list {response_list_key} and channel {response_channel}"
+            f"使用Redis列表 {response_list_key} 和通道 {response_channel} 流式传输 {agent_run_id} 的响应"
         )
         last_processed_index = -1
-        # Single pubsub used for response + control
+        # 单个pubsub用于响应+控制
         listener_task = None
         terminate_stream = False
         initial_yield_complete = False
 
         try:
-            # 1. Fetch and yield initial responses from Redis list
+            # 1. 从Redis列表获取并发送初始响应
             initial_responses_json = await redis.lrange(response_list_key, 0, -1)
             initial_responses = []
             if initial_responses_json:
                 initial_responses = [json.loads(r) for r in initial_responses_json]
                 logger.debug(
-                    f"Sending {len(initial_responses)} initial responses for {agent_run_id}"
+                    f"为 {agent_run_id} 发送 {len(initial_responses)} 个初始响应"
                 )
                 for response in initial_responses:
                     yield f"data: {json.dumps(response)}\n\n"
                 last_processed_index = len(initial_responses) - 1
             initial_yield_complete = True
 
-            # 2. Check run status
+            # 2. 检查运行状态
             current_status = agent_run_data.get("status") if agent_run_data else None
 
             if current_status != "running":
                 logger.debug(
-                    f"Agent run {agent_run_id} is not running (status: {current_status}). Ending stream."
+                    f"代理运行 {agent_run_id} 未在运行（状态: {current_status}）。结束流式传输。"
                 )
                 yield f"data: {json.dumps({'type': 'status', 'status': 'completed'})}\n\n"
                 return
@@ -637,14 +617,12 @@ async def stream_agent_run(
                 thread_id=agent_run_data.get("thread_id"),
             )
 
-            # 3. Use a single Pub/Sub connection subscribed to both channels
+            # 3. 使用单个Pub/Sub连接订阅两个通道
             pubsub = await redis.create_pubsub()
             await pubsub.subscribe(response_channel, control_channel)
-            logger.debug(
-                f"Subscribed to channels: {response_channel}, {control_channel}"
-            )
+            logger.debug(f"已订阅通道: {response_channel}, {control_channel}")
 
-            # Queue to communicate between listeners and the main generator loop
+            # 用于监听器和主生成器循环之间通信的队列
             message_queue = asyncio.Queue()
 
             async def listen_messages():
@@ -676,42 +654,42 @@ async def stream_agent_run(
                                     "ERROR",
                                 ]:
                                     logger.debug(
-                                        f"Received control signal '{data}' for {agent_run_id}"
+                                        f"接收到 {agent_run_id} 的控制信号 '{data}'"
                                     )
                                     await message_queue.put(
                                         {"type": "control", "data": data}
                                     )
-                                    return  # Stop listening on control signal
+                                    return  # 收到控制信号时停止监听
 
                         except StopAsyncIteration:
-                            logger.warning(f"Listener stopped for {agent_run_id}.")
+                            logger.warning(f"监听器为 {agent_run_id} 停止。")
                             await message_queue.put(
                                 {
                                     "type": "error",
-                                    "data": "Listener stopped unexpectedly",
+                                    "data": "监听器意外停止",
                                 }
                             )
                             return
                         except Exception as e:
-                            logger.error(f"Error in listener for {agent_run_id}: {e}")
+                            logger.error(f"监听器为 {agent_run_id} 出错: {e}")
                             await message_queue.put(
-                                {"type": "error", "data": "Listener failed"}
+                                {"type": "error", "data": "监听器失败"}
                             )
                             return
                         finally:
-                            # Resubscribe to the next message if continuing
+                            # 如果继续则重新订阅下一条消息
                             if not terminate_stream:
                                 task = asyncio.create_task(listener.__anext__())
 
             listener_task = asyncio.create_task(listen_messages())
 
-            # 4. Main loop to process messages from the queue
+            # 4. 主循环处理队列中的消息
             while not terminate_stream:
                 try:
                     queue_item = await message_queue.get()
 
                     if queue_item["type"] == "new_response":
-                        # Fetch new responses from Redis list starting after the last processed index
+                        # 从Redis列表获取新响应，从最后处理的索引之后开始
                         new_start_index = last_processed_index + 1
                         new_responses_json = await redis.lrange(
                             response_list_key, new_start_index, -1
@@ -720,80 +698,78 @@ async def stream_agent_run(
                         if new_responses_json:
                             new_responses = [json.loads(r) for r in new_responses_json]
                             num_new = len(new_responses)
-                            # logger.debug(f"Received {num_new} new responses for {agent_run_id} (index {new_start_index} onwards)")
+                            # logger.debug(f"接收到 {num_new} 个新响应 for {agent_run_id} (索引 {new_start_index} 开始)")
                             for response in new_responses:
                                 yield f"data: {json.dumps(response)}\n\n"
-                                # Check if this response signals completion
+                                # 检查此响应是否表示完成
                                 if response.get("type") == "status" and response.get(
                                     "status"
                                 ) in ["completed", "failed", "stopped"]:
                                     logger.debug(
-                                        f"Detected run completion via status message in stream: {response.get('status')}"
+                                        f"通过流中的状态消息检测到运行完成: {response.get('status')}"
                                     )
                                     terminate_stream = True
-                                    break  # Stop processing further new responses
+                                    break  # 停止处理更多新响应
                             last_processed_index += num_new
                         if terminate_stream:
                             break
 
                     elif queue_item["type"] == "control":
                         control_signal = queue_item["data"]
-                        terminate_stream = True  # Stop the stream on any control signal
+                        terminate_stream = True  # 收到任何控制信号时停止流
                         yield f"data: {json.dumps({'type': 'status', 'status': control_signal})}\n\n"
                         break
 
                     elif queue_item["type"] == "error":
                         logger.error(
-                            f"Listener error for {agent_run_id}: {queue_item['data']}"
+                            f"监听器为 {agent_run_id} 出错: {queue_item['data']}"
                         )
                         terminate_stream = True
                         yield f"data: {json.dumps({'type': 'status', 'status': 'error'})}\n\n"
                         break
 
                 except asyncio.CancelledError:
-                    logger.debug(
-                        f"Stream generator main loop cancelled for {agent_run_id}"
-                    )
+                    logger.debug(f"流生成器主循环为 {agent_run_id} 被取消")
                     terminate_stream = True
                     break
                 except Exception as loop_err:
                     logger.error(
-                        f"Error in stream generator main loop for {agent_run_id}: {loop_err}",
+                        f"流生成器主循环为 {agent_run_id} 出错: {loop_err}",
                         exc_info=True,
                     )
                     terminate_stream = True
-                    yield f"data: {json.dumps({'type': 'status', 'status': 'error', 'message': f'Stream failed: {loop_err}'})}\n\n"
+                    yield f"data: {json.dumps({'type': 'status', 'status': 'error', 'message': f'流失败: {loop_err}'})}\n\n"
                     break
 
         except Exception as e:
             logger.error(
-                f"Error setting up stream for agent run {agent_run_id}: {e}",
+                f"为代理运行 {agent_run_id} 设置流时出错: {e}",
                 exc_info=True,
             )
-            # Only yield error if initial yield didn't happen
+            # 仅在初始发送未发生时发送错误
             if not initial_yield_complete:
-                yield f"data: {json.dumps({'type': 'status', 'status': 'error', 'message': f'Failed to start stream: {e}'})}\n\n"
+                yield f"data: {json.dumps({'type': 'status', 'status': 'error', 'message': f'启动流失败: {e}'})}\n\n"
         finally:
             terminate_stream = True
-            # Graceful shutdown order: unsubscribe → close → cancel
+            # 优雅关闭顺序: 取消订阅 → 关闭 → 取消
             try:
                 if "pubsub" in locals() and pubsub:
                     await pubsub.unsubscribe(response_channel, control_channel)
                     await pubsub.close()
             except Exception as e:
-                logger.debug(f"Error during pubsub cleanup for {agent_run_id}: {e}")
+                logger.debug(f"清理pubsub为 {agent_run_id} 时出错: {e}")
 
             if listener_task:
                 listener_task.cancel()
                 try:
-                    await listener_task  # Reap inner tasks & swallow their errors
+                    await listener_task  # 回收内部任务并忽略其错误
                 except asyncio.CancelledError:
                     pass
                 except Exception as e:
-                    logger.debug(f"listener_task ended with: {e}")
-            # Wait briefly for tasks to cancel
+                    logger.debug(f"监听器任务以错误结束: {e}")
+            # 短暂等待任务取消
             await asyncio.sleep(0.1)
-            logger.debug(f"Streaming cleanup complete for agent run: {agent_run_id}")
+            logger.debug(f"流式传输清理完成 for agent run: {agent_run_id}")
 
     return StreamingResponse(
         stream_generator(agent_run_data),
