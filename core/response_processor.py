@@ -309,14 +309,16 @@ class ResponseProcessor:
                 ):
                     logger.debug(f"处理块 #{chunk_count}, 类型={type(chunk).__name__}")
 
-                ## 当我们获得使用数据时，存储完整的LiteLLM响应块
+                logger.debug(f"处理块 #{chunk_count}, 值={chunk}")
+
+                ## 当我们获得使用数据时，存储完整的 Claude Code 响应块
                 if (
                     hasattr(chunk, "usage")
                     and chunk.usage
                     and final_llm_response is None
                 ):
                     logger.info(
-                        "🔍 存储接收到的完整 LiteLLM 响应块"
+                        "🔍 存储接收到的完整 Claude Code 响应块"
                     )
                     final_llm_response = chunk  # 按原样存储整个块对象
                     logger.info(
@@ -326,18 +328,18 @@ class ResponseProcessor:
                     logger.info(f"🔍 存储的响应类型: {type(chunk)}")
 
                 if (
-                    hasattr(chunk, "choices")
-                    and chunk.choices
-                    and hasattr(chunk.choices[0], "finish_reason")
-                    and chunk.choices[0].finish_reason
+                    hasattr(chunk, "event")
+                    and chunk.event
+                    and hasattr(chunk.event, "finish_reason")
+                    and chunk.event.finish_reason
                 ):
-                    finish_reason = chunk.choices[0].finish_reason
+                    finish_reason = chunk.event.finish_reason
                     logger.debug(f"检测到 finish_reason：{finish_reason}")
 
-                if hasattr(chunk, "choices") and chunk.choices:
+                if hasattr(chunk, "event") and chunk.event:
                     delta = (
-                        chunk.choices[0].delta
-                        if hasattr(chunk.choices[0], "delta")
+                        chunk.event.content_block
+                        if hasattr(chunk.event, "content_block")
                         else None
                     )
 
@@ -362,8 +364,8 @@ class ResponseProcessor:
                         accumulated_content += reasoning_content
 
                     # 处理内容块
-                    if delta and hasattr(delta, "content") and delta.content:
-                        chunk_content = delta.content
+                    if delta and hasattr(delta, "text") and delta.text:
+                        chunk_content = delta.text
                         # logger.debug(f"处理 chunk_content: 类型={type(chunk_content)}, 值={chunk_content}")
                         if isinstance(chunk_content, list):
                             chunk_content = "".join(str(item) for item in chunk_content)

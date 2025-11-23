@@ -15,7 +15,6 @@ from configs import app_config
 from core.run import run_agent
 from core.services import redis
 from core.services.db import get_db
-from core.utils.json_helpers import to_json_string
 from models.agent_run import AgentRun
 
 logger.info(
@@ -196,6 +195,7 @@ async def run_agent_background(
             project_id=project_id,
             agent_config=agent_config,
             cancellation_event=cancellation_event,
+            native_max_auto_continues=0
         )
 
         final_status = "running"
@@ -237,9 +237,7 @@ async def run_agent_background(
         # 如果循环结束但没有明确的完成/错误/停止信号，则标记为已完成
         if final_status == "running":
             final_status = "completed"
-            duration = (
-                datetime.now() - start_time
-            ).total_seconds()
+            duration = (datetime.now() - start_time).total_seconds()
             logger.info(
                 f"Agent 运行 {agent_run_id} 正常完成 (持续: {duration:.2f}秒, 响应数: {total_responses})"
             )
@@ -278,9 +276,7 @@ async def run_agent_background(
     except Exception as e:
         error_message = str(e)
         traceback_str = traceback.format_exc()
-        duration = (
-            datetime.now() - start_time
-        ).total_seconds()
+        duration = (datetime.now() - start_time).total_seconds()
         logger.error(
             f"Agent 运行 {agent_run_id} 运行 {duration:.2f}秒后出错: {error_message}\n{traceback_str} (实例: {instance_id})"
         )

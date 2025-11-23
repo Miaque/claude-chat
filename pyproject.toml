@@ -29,6 +29,13 @@ packages = []
 default-groups = []
 package = false
 
+[tool.pyrefly]
+project-includes = ["**/*.py*", "**/*.ipynb"]
+
+project-excludes = [".venv", "__pycache__", "build", "dist", ".claude"]
+
+strict = true
+
 [dependency-groups]
 dev = [
     "pytest>=9.0.1",

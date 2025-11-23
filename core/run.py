@@ -131,8 +131,6 @@ class AgentRunner:
             f"📝 系统消息构建完成: {len(str(system_message.get('content', '')))} 字符"
         )
         logger.debug(f"收到 model_name: {self.config.model_name}")
-        iteration_count = 0
-        continue_execution = True
 
         with get_db() as db:
             latest_user_message = (
@@ -153,166 +151,93 @@ class AgentRunner:
                 data.get("content") if isinstance(data, dict) else str(data)
             )
 
-        while continue_execution and iteration_count < self.config.max_iterations:
-            iteration_count += 1
+        temporary_message = None
+        # 默认不设置max_tokens - 让LiteLLM和提供商处理自己的默认值
+        max_tokens = None
+        logger.debug(f"max_tokens: {max_tokens} (使用提供商默认值)")
+        try:
+            logger.debug(f"开始为 {self.config.thread_id} 执行线程")
+            response = await self.thread_manager.run_thread(
+                thread_id=self.config.thread_id,
+                system_prompt=system_message,
+                stream=True,
+                llm_model=self.config.model_name,
+                llm_temperature=0,
+                llm_max_tokens=max_tokens,
+                tool_choice="auto",
+                max_xml_tool_calls=1,
+                temporary_message=temporary_message,
+                latest_user_message_content=latest_user_message_content,
+                processor_config=ProcessorConfig(
+                    execute_on_stream=True,
+                ),
+                native_max_auto_continues=self.config.native_max_auto_continues,
+                cancellation_event=cancellation_event,
+            )
 
-            with get_db() as db:
-                latest_message = (
-                    db.query(Message)
-                    .filter(Message.thread_id == self.config.thread_id)
-                    .filter(Message.type.in_(["assistant", "tool", "user"]))
-                    .order_by(Message.created_at.desc())
-                    .first()
-                )
-
-            if latest_message:
-                message_type = latest_message.type
-                if message_type == "assistant":
-                    continue_execution = False
-                    break
-
-            temporary_message = None
-            # 默认不设置max_tokens - 让LiteLLM和提供商处理自己的默认值
-            max_tokens = None
-            logger.debug(f"max_tokens: {max_tokens} (使用提供商默认值)")
             try:
-                logger.debug(f"开始为 {self.config.thread_id} 执行线程")
-                response = await self.thread_manager.run_thread(
-                    thread_id=self.config.thread_id,
-                    system_prompt=system_message,
-                    stream=True,
-                    llm_model=self.config.model_name,
-                    llm_temperature=0,
-                    llm_max_tokens=max_tokens,
-                    tool_choice="auto",
-                    max_xml_tool_calls=1,
-                    temporary_message=temporary_message,
-                    latest_user_message_content=latest_user_message_content,
-                    processor_config=ProcessorConfig(
-                        execute_on_stream=True,
-                    ),
-                    native_max_auto_continues=self.config.native_max_auto_continues,
-                    cancellation_event=cancellation_event,
-                )
-
-                last_tool_call = None
-                agent_should_terminate = False
-                error_detected = False
-
-                try:
-                    if hasattr(response, "__aiter__") and not isinstance(
-                        response, dict
-                    ):
-                        async for chunk in response:
-                            # 检查来自thread_manager的错误状态
-                            if (
-                                isinstance(chunk, dict)
-                                and chunk.get("type") == "status"
-                                and chunk.get("status") == "error"
-                            ):
-                                logger.error(
-                                    f"线程执行出错: {chunk.get('message', '未知错误')}"
-                                )
-                                error_detected = True
-                                yield chunk
-                                continue
-
-                            # 检查流中的错误状态（消息格式）
-                            if (
-                                isinstance(chunk, dict)
-                                and chunk.get("type") == "status"
-                            ):
-                                try:
-                                    content = chunk.get("content", {})
-                                    if isinstance(content, str):
-                                        content = json.loads(content)
-
-                                    # 检查错误状态
-                                    if content.get("status_type") == "error":
-                                        error_detected = True
-                                        yield chunk
-                                        continue
-
-                                    # 检查代理终止
-                                    metadata = chunk.get("meta", {})
-                                    if isinstance(metadata, str):
-                                        metadata = json.loads(metadata)
-
-                                    if metadata.get("agent_should_terminate"):
-                                        agent_should_terminate = True
-
-                                        if content.get("function_name"):
-                                            last_tool_call = content["function_name"]
-                                        elif content.get("xml_tag_name"):
-                                            last_tool_call = content["xml_tag_name"]
-
-                                except Exception:
-                                    pass
-
-                            # 检查助手内容中的终止XML工具
-                            if chunk.get("type") == "assistant" and "content" in chunk:
-                                try:
-                                    content = chunk.get("content", "{}")
-                                    if isinstance(content, str):
-                                        assistant_content_json = json.loads(content)
-                                    else:
-                                        assistant_content_json = content
-
-                                    assistant_text = assistant_content_json.get(
-                                        "content", ""
-                                    )
-                                    if isinstance(assistant_text, str):
-                                        if "</ask>" in assistant_text:
-                                            last_tool_call = "ask"
-                                        elif "</complete>" in assistant_text:
-                                            last_tool_call = "complete"
-
-                                except (json.JSONDecodeError, Exception):
-                                    pass
-
-                            yield chunk
-                    else:
-                        # 非流式响应或错误字典
-                        # logger.debug(f"响应不是异步可迭代的: {type(response)}")
-
-                        # 检查是否是错误字典
+                if hasattr(response, "__aiter__") and not isinstance(response, dict):
+                    async for chunk in response:
+                        # 检查来自thread_manager的错误状态
                         if (
-                            isinstance(response, dict)
-                            and response.get("type") == "status"
-                            and response.get("status") == "error"
+                            isinstance(chunk, dict)
+                            and chunk.get("type") == "status"
+                            and chunk.get("status") == "error"
                         ):
                             logger.error(
-                                f"线程返回错误: {response.get('message', '未知错误')}"
+                                f"线程执行出错: {chunk.get('message', '未知错误')}"
                             )
-                            error_detected = True
-                            yield response
-                        else:
-                            logger.warning(f"意外的响应类型: {type(response)}")
-                            error_detected = True
+                            yield chunk
+                            continue
 
-                    if error_detected:
-                        break
+                        # 检查流中的错误状态（消息格式）
+                        if isinstance(chunk, dict) and chunk.get("type") == "status":
+                            try:
+                                content = chunk.get("content", {})
+                                if isinstance(content, str):
+                                    content = json.loads(content)
 
-                    if agent_should_terminate or last_tool_call in ["ask", "complete"]:
-                        continue_execution = False
+                                # 检查错误状态
+                                if content.get("status_type") == "error":
+                                    yield chunk
+                                    continue
 
-                except Exception as e:
-                    # 使用ErrorProcessor进行安全错误处理
-                    processed_error = ErrorProcessor.process_system_error(
-                        e, context={"thread_id": self.config.thread_id}
-                    )
-                    ErrorProcessor.log_error(processed_error)
-                    yield processed_error.to_stream_dict()
-                    break
+                            except Exception:
+                                pass
+
+                        yield chunk
+                else:
+                    # 非流式响应或错误字典
+                    # logger.debug(f"响应不是异步可迭代的: {type(response)}")
+
+                    # 检查是否是错误字典
+                    if (
+                        isinstance(response, dict)
+                        and response.get("type") == "status"
+                        and response.get("status") == "error"
+                    ):
+                        logger.error(
+                            f"线程返回错误: {response.get('message', '未知错误')}"
+                        )
+                        yield response
+                    else:
+                        logger.warning(f"意外的响应类型: {type(response)}")
 
             except Exception as e:
-                # 使用ErrorProcessor进行安全错误转换
+                # 使用ErrorProcessor进行安全错误处理
                 processed_error = ErrorProcessor.process_system_error(
                     e, context={"thread_id": self.config.thread_id}
                 )
                 ErrorProcessor.log_error(processed_error)
                 yield processed_error.to_stream_dict()
-                break
+
+        except Exception as e:
+            # 使用ErrorProcessor进行安全错误转换
+            processed_error = ErrorProcessor.process_system_error(
+                e, context={"thread_id": self.config.thread_id}
+            )
+            ErrorProcessor.log_error(processed_error)
+            yield processed_error.to_stream_dict()
 
 
 async def run_agent(
