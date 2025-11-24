@@ -3,6 +3,7 @@ import datetime
 import json
 from dataclasses import dataclass
 from typing import Any, AsyncGenerator, Dict, Optional
+from uuid import UUID
 
 from loguru import logger
 
@@ -93,7 +94,7 @@ class AgentRunner:
         if not response:
             raise ValueError(f"未找到线程 {self.config.thread_id}")
 
-        self.account_id = response.account_id
+        self.account_id = str(response.account_id)
 
         if not self.account_id:
             raise ValueError(f"线程 {self.config.thread_id} 没有关联的账户")
@@ -116,8 +117,8 @@ class AgentRunner:
             )
 
     async def run(
-        self, cancellation_event: Optional[asyncio.Event] = None
-    ) -> AsyncGenerator[Dict[str, Any], None]:
+        self, cancellation_event: asyncio.Event | None
+    ) -> AsyncGenerator[dict[str, Any], None]:
         await self.setup()
 
         system_message = await PromptManager.build_system_prompt(
