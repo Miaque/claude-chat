@@ -28,7 +28,7 @@
             "request": "launch",
             "program": "api.py",
             "console": "integratedTerminal",
-            "envFile": "${workspaceFolder}/.env"
+            "envFile": "${workspaceFolder}/.env",
         }
     ]
 }

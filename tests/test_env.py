@@ -10,3 +10,4 @@ def test_env():
 def test_now():
     print(datetime.now(ZoneInfo("Asia/Shanghai")))
     print(datetime.now())
+    print(datetime.now().strftime("%Y%m%d_%H%M%S"))

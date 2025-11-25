@@ -5,9 +5,15 @@
   "terminal.integrated.env.windows": {
     "PYTHONPATH": "${workspaceFolder}"
   },
-  "python.analysis.extraPaths": ["${workspaceFolder}"],
-  "cursorpyright.analysis.extraPaths": ["${workspaceFolder}"],
-  "windsurfPyright.analysis.extraPaths": ["${workspaceFolder}"],
+  "python.analysis.extraPaths": [
+    "${workspaceFolder}"
+  ],
+  "cursorpyright.analysis.extraPaths": [
+    "${workspaceFolder}"
+  ],
+  "windsurfPyright.analysis.extraPaths": [
+    "${workspaceFolder}"
+  ],
   "python.analysis.autoImportCompletions": true,
   "cursorpyright.analysis.autoImportCompletions": true,
   "windsurfPyright.analysis.autoImportCompletions": true,
@@ -20,7 +26,9 @@
     }
   ],
   "debugpy.debugJustMyCode": true,
-  "python.testing.pytestArgs": ["-s"],
+  "python.testing.pytestArgs": [
+    "-s"
+  ],
   "python.testing.unittestEnabled": false,
   "python.testing.pytestEnabled": true,
   "files.exclude": {
