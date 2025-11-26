@@ -1,13 +1,14 @@
 import uuid
 from datetime import datetime
-from typing import Literal, Optional
+from typing import List, Literal, Optional
 from uuid import uuid4
 
+from loguru import logger
 from pydantic import BaseModel, ConfigDict
-from sqlalchemy import TEXT, UUID, Column, DateTime
+from sqlalchemy import TEXT, UUID, Column, ColumnElement, DateTime
 from sqlalchemy.dialects.postgresql import JSONB
 
-from core.services.db import Base
+from core.services.db import Base, get_db
 
 
 class AgentRun(Base):
@@ -44,3 +45,61 @@ class AgentRunModel(BaseModel):
         extra="ignore",
         json_encoders={datetime: lambda dt: dt.strftime("%Y-%m-%d %H:%M:%S")},
     )
+
+
+class AgentRunTable:
+    @staticmethod
+    def get_by_id(agent_run_id: str) -> AgentRunModel | None:
+        try:
+            with get_db() as db:
+                agent_run = (
+                    db.query(AgentRun).filter(AgentRun.id == agent_run_id).first()
+                )
+                return AgentRunModel.model_validate(agent_run) if agent_run else None
+        except Exception:
+            logger.exception(f"根据id => [{agent_run_id}]查询agent运行记录失败")
+            return None
+
+    @staticmethod
+    def insert(agent_run: AgentRun) -> AgentRunModel:
+        try:
+            with get_db() as db:
+                db.add(agent_run)
+                db.commit()
+                db.refresh(agent_run)
+                return AgentRunModel.model_validate(agent_run)
+        except Exception:
+            logger.exception("插入agent运行记录失败")
+            raise
+
+    @staticmethod
+    def get_running_agent_runs(
+        *fields: ColumnElement,
+    ) -> list[AgentRunModel] | list[AgentRun] | None:
+        try:
+            with get_db() as db:
+                if fields:
+                    agent_runs = (
+                        db.query(*fields).filter(AgentRun.status == "running").all()
+                    )
+
+                    return agent_runs or None
+                else:
+                    agent_runs = (
+                        db.query(AgentRun).filter(AgentRun.status == "running").all()
+                    )
+
+                    return (
+                        [
+                            AgentRunModel.model_validate(agent_run)
+                            for agent_run in agent_runs
+                        ]
+                        if agent_runs
+                        else None
+                    )
+        except Exception:
+            logger.exception("获取正在运行的agent运行记录失败")
+            raise
+
+
+AgentRuns = AgentRunTable()

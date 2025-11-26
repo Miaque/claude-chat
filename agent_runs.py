@@ -2,8 +2,8 @@ import asyncio
 import json
 import traceback
 import uuid
-from datetime import datetime, timezone
-from typing import Any, Dict, List, Optional
+from datetime import datetime
+from typing import Any, List, Optional
 
 import structlog
 from fastapi import (
@@ -17,7 +17,6 @@ from fastapi import (
 )
 from fastapi.responses import StreamingResponse
 from loguru import logger
-from pydantic import BaseModel
 
 import core_utils
 from core.services import redis
@@ -28,88 +27,25 @@ from core.utils.auth_utils import (
 )
 from core.utils.project_helpers import generate_and_update_project_name
 from core.utils.run_management import stop_agent_run_with_helpers as stop_agent_run
-from models.agent_run import AgentRun, AgentRunModel
-from models.message import Message
-from models.project import Project
-from models.thread import Thread, ThreadModel
+from models.agent_run import AgentRun, AgentRuns
+from models.message import Message, Messages
+from models.project import Project, Projects
+from models.thread import Thread, Threads
 from run_agent_background import run_agent_background
+from schemas.threads import UnifiedAgentStartResponse
 
 router = APIRouter(tags=["agent-runs"])
-
-
-class UnifiedAgentStartResponse(BaseModel):
-    """统一代理启动响应模型（新线程和现有线程）"""
-
-    thread_id: str
-    agent_run_id: str
-    status: str = "running"
-
-
-class AgentVersionResponse(BaseModel):
-    """代理版本信息响应模型"""
-
-    version_id: str
-    agent_id: str
-    version_number: int
-    version_name: str
-    system_prompt: str
-    model: Optional[str] = None
-    configured_mcps: List[Dict[str, Any]]
-    custom_mcps: List[Dict[str, Any]]
-    agentpress_tools: Dict[str, Any]
-    is_active: bool
-    created_at: str
-    updated_at: str
-    created_by: Optional[str] = None
-
-
-class AgentResponse(BaseModel):
-    """代理信息响应模型"""
-
-    agent_id: str
-    name: str
-    description: Optional[str] = None
-    system_prompt: Optional[str] = None  # 列表操作可选，未加载配置时
-    model: Optional[str] = None
-    configured_mcps: List[Dict[str, Any]]
-    custom_mcps: List[Dict[str, Any]]
-    agentpress_tools: Dict[str, Any]
-    is_default: bool
-    is_public: Optional[bool] = False
-    tags: Optional[List[str]] = []
-    icon_name: Optional[str] = None
-    icon_color: Optional[str] = None
-    icon_background: Optional[str] = None
-    created_at: str
-    updated_at: Optional[str] = None
-    current_version_id: Optional[str] = None
-    version_count: Optional[int] = 1
-    current_version: Optional[AgentVersionResponse] = None
-    metadata: Optional[Dict[str, Any]] = None
-    account_id: Optional[str] = None  # 内部字段，响应中可能不需要
-
-
-class ThreadAgentResponse(BaseModel):
-    """线程代理信息响应模型"""
-
-    agent: Optional[AgentResponse]
-    source: str
-    message: str
 
 
 async def _get_agent_run_with_access_check(agent_run_id: str, user_id: str):
     """ "
     获取代理运行并验证用户是否有访问权限。
     """
-
-    with get_db() as db:
-        agent_run = db.query(AgentRun).filter(AgentRun.id == agent_run_id).first()
-
+    agent_run = AgentRuns.get_by_id(agent_run_id)
     if not agent_run:
-        raise HTTPException(status_code=404, detail="未找到代理运行")
+        raise HTTPException(status_code=404, detail="未找到代理运行记录")
 
-    agent_run_data = AgentRunModel.model_validate(agent_run)
-    return agent_run_data.model_dump()
+    return agent_run.model_dump(mode="json")
 
 
 async def _get_effective_model(model_name: Optional[str], account_id: str) -> str:
@@ -129,23 +65,20 @@ async def _create_agent_run_record(thread_id: str, effective_model: str) -> str:
     返回:
         agent_run_id: 创建的代理运行记录ID
     """
-    with get_db() as db:
-        current_time = datetime.now()
-        agent_run = AgentRun(
-            **{
-                "thread_id": thread_id,
-                "status": "running",
-                "started_at": current_time,
-                "created_at": current_time,
-                "updated_at": current_time,
-                "agent_id": None,
-                "agent_version_id": None,
-                "meta": {"model_name": effective_model},
-            }
-        )
-        db.add(agent_run)
-        db.commit()
-        db.refresh(agent_run)
+    current_time = datetime.now()
+    agent_run = AgentRun(
+        **{
+            "thread_id": thread_id,
+            "status": "running",
+            "started_at": current_time,
+            "created_at": current_time,
+            "updated_at": current_time,
+            "agent_id": None,
+            "agent_version_id": None,
+            "meta": {"model_name": effective_model},
+        }
+    )
+    agent_run = AgentRuns.insert(agent_run)
 
     agent_run_id = str(agent_run.id)
     structlog.contextvars.bind_contextvars(agent_run_id=agent_run_id)
@@ -156,7 +89,7 @@ async def _create_agent_run_record(thread_id: str, effective_model: str) -> str:
     try:
         await redis.set(instance_key, "running", ex=redis.REDIS_KEY_TTL)
     except Exception as e:
-        logger.warning(f"在Redis中注册代理运行失败 ({instance_key}): {str(e)}")
+        logger.warning(f"在Redis中注册代理运行记录失败 ({instance_key}): {str(e)}")
 
     return agent_run_id
 
@@ -240,17 +173,13 @@ async def unified_agent_start(
             structlog.contextvars.bind_contextvars(thread_id=thread_id)
 
             # 验证线程存在并获取元数据
-            with get_db() as db:
-                thread_result = (
-                    db.query(Thread.project_id, Thread.account_id, Thread.meta)
-                    .filter(Thread.thread_id == thread_id)
-                    .first()
-                )
+            thread_data = Threads.get_by_id(
+                thread_id, Thread.project_id, Thread.account_id, Thread.meta
+            )
 
-            if not thread_result:
+            if not thread_data:
                 raise HTTPException(status_code=404, detail="未找到线程")
 
-            thread_data = ThreadModel.model_validate(thread_result)
             project_id = str(thread_data.project_id)
             thread_account_id = str(thread_data.account_id)
             thread_metadata = thread_data.meta
@@ -268,20 +197,19 @@ async def unified_agent_start(
                 # 没有文件但提供了用户输入 - 创建用户消息
                 message_id = str(uuid.uuid4())
                 message_payload = {"role": "user", "content": prompt}
-                with get_db() as db:
-                    message = Message(
-                        **{
-                            "message_id": message_id,
-                            "thread_id": thread_id,
-                            "type": "user",
-                            "is_llm_message": True,
-                            "content": message_payload,
-                            "created_at": datetime.now(),
-                        }
-                    )
-                    db.add(message)
-                    db.commit()
-
+                current_time = datetime.now()
+                message = Message(
+                    **{
+                        "message_id": message_id,
+                        "thread_id": thread_id,
+                        "type": "user",
+                        "is_llm_message": True,
+                        "content": message_payload,
+                        "created_at": current_time,
+                        "updated_at": current_time,
+                    }
+                )
+                Messages.save(message)
                 logger.debug(f"为线程 {thread_id} 创建用户消息")
 
             # 创建代理运行记录
@@ -316,9 +244,10 @@ async def unified_agent_start(
 
             # 创建项目
             placeholder_name = f"{prompt[:30]}..." if len(prompt) > 30 else prompt
-            with get_db() as db:
-                current_time = datetime.now()
-                project = Project(
+
+            current_time = datetime.now()
+            project = Projects.insert(
+                Project(
                     **{
                         "project_id": str(uuid.uuid4()),
                         "account_id": account_id,
@@ -327,9 +256,7 @@ async def unified_agent_start(
                         "updated_at": current_time,
                     }
                 )
-                db.add(project)
-                db.commit()
-                db.refresh(project)
+            )
 
             project_id = str(project.project_id)
             logger.info(f"创建新项目: {project_id}")
@@ -350,12 +277,7 @@ async def unified_agent_start(
                 account_id=account_id,
             )
 
-            with get_db() as db:
-                thread = Thread(**thread_data)
-                db.add(thread)
-                db.commit()
-                db.refresh(thread)
-
+            thread = Threads.insert(Thread(**thread_data))
             thread_id = str(thread.thread_id)
             logger.debug(f"创建新线程: {thread_id}")
 
@@ -370,21 +292,19 @@ async def unified_agent_start(
             # 创建初始用户消息
             message_id = str(uuid.uuid4())
             message_payload = {"role": "user", "content": message_content}
-            with get_db() as db:
-                current_time = datetime.now()
-                message = Message(
-                    **{
-                        "message_id": message_id,
-                        "thread_id": thread_id,
-                        "type": "user",
-                        "is_llm_message": True,
-                        "content": message_payload,
-                        "created_at": current_time,
-                        "updated_at": current_time,
-                    }
-                )
-                db.add(message)
-                db.commit()
+            current_time = datetime.now()
+            message = Message(
+                **{
+                    "message_id": message_id,
+                    "thread_id": thread_id,
+                    "type": "user",
+                    "is_llm_message": True,
+                    "content": message_payload,
+                    "created_at": current_time,
+                    "updated_at": current_time,
+                }
+            )
+            Messages.save(message)
 
             # 创建代理运行记录
             agent_run_id = await _create_agent_run_record(thread_id, effective_model)
@@ -445,47 +365,35 @@ async def get_active_agent_runs(
         logger.debug(f"获取用户所有正在运行的代理: {user_id}")
 
         # 查询所有运行中的代理运行，其中线程属于该用户
-        # 与threads表连接以按account_id过滤
-        with get_db() as db:
-            agent_runs = (
-                db.query(
-                    AgentRun.id,
-                    AgentRun.thread_id,
-                    AgentRun.status,
-                    AgentRun.started_at,
-                )
-                .filter(AgentRun.status == "running")
-                .all()
-            )
+        user_threads = AgentRuns.get_running_agent_runs(
+            AgentRun.id, AgentRun.thread_id, AgentRun.status, AgentRun.started_at
+        )
 
-        if not agent_runs:
+        if not user_threads:
             return {"active_runs": []}
 
         # 过滤代理运行，仅包含用户有访问权限的
         # 获取thread_ids并检查访问权限
-        thread_ids = [run.thread_id for run in agent_runs]
+        thread_ids = [str(run.thread_id) for run in user_threads]
 
         # 获取属于用户的线程
-        with get_db() as db:
-            threads = (
-                db.query(Thread)
-                .filter(Thread.thread_id.in_(thread_ids))
-                .filter(Thread.account_id == user_id)
-                .all()
-            )
+        threads = Threads.get_by_ids(thread_ids, user_id)
+
+        if not threads:
+            return {"active_runs": []}
 
         # 创建可访问线程ID的集合
-        accessible_thread_ids = {thread.thread_id for thread in threads}
+        accessible_thread_ids = {str(thread.thread_id) for thread in threads}
 
         # 过滤代理运行，仅包含可访问的
         accessible_runs = [
             {
-                "id": run.id,
-                "thread_id": run.thread_id,
+                "id": str(run.id),
+                "thread_id": str(run.thread_id),
                 "status": run.status,
                 "started_at": run.started_at,
             }
-            for run in agent_runs
+            for run in user_threads
             if run.thread_id in accessible_thread_ids
         ]
 

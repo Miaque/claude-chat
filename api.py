@@ -12,7 +12,7 @@ from agent_runs import router as agent_runs_router
 from core_utils import cleanup, initialize
 
 os.environ["TZ"] = "Asia/Shanghai"
-instance_id = "single"
+instance_id = str(uuid.uuid4())[:8]
 
 
 @asynccontextmanager

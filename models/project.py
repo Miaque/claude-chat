@@ -3,11 +3,12 @@ from datetime import datetime
 from typing import Optional
 from uuid import uuid4
 
+from loguru import logger
 from pydantic import BaseModel, ConfigDict
 from sqlalchemy import UUID, Boolean, Column, DateTime, Text
 from sqlalchemy.dialects.postgresql import JSONB
 
-from core.services.db import Base
+from core.services.db import Base, get_db
 
 
 class Project(Base):
@@ -40,3 +41,20 @@ class ProjectModel(BaseModel):
         extra="ignore",
         json_encoders={datetime: lambda dt: dt.strftime("%Y-%m-%d %H:%M:%S")},
     )
+
+
+class ProjectTable:
+    @staticmethod
+    def insert(project: Project) -> ProjectModel:
+        try:
+            with get_db() as db:
+                db.add(project)
+                db.commit()
+                db.refresh(project)
+                return ProjectModel.model_validate(project)
+        except Exception:
+            logger.exception("创建新项目失败")
+            raise
+
+
+Projects = ProjectTable()

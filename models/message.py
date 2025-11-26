@@ -3,11 +3,12 @@ from datetime import datetime
 from typing import Optional
 from uuid import uuid4
 
+from loguru import logger
 from pydantic import BaseModel, ConfigDict
 from sqlalchemy import TEXT, UUID, Boolean, Column, DateTime
 from sqlalchemy.dialects.postgresql import JSONB
 
-from core.services.db import Base
+from core.services.db import Base, get_db
 
 
 class Message(Base):
@@ -42,3 +43,30 @@ class MessageModel(BaseModel):
         extra="ignore",
         json_encoders={datetime: lambda dt: dt.strftime("%Y-%m-%d %H:%M:%S")},
     )
+
+
+class MessageTable:
+    @staticmethod
+    def save(message: Message):
+        try:
+            with get_db() as db:
+                db.add(message)
+                db.commit()
+        except Exception:
+            logger.exception("保存用户消息失败")
+            raise
+
+    @staticmethod
+    def insert(message: Message) -> MessageModel:
+        try:
+            with get_db() as db:
+                db.add(message)
+                db.commit()
+                db.refresh(message)
+                return MessageModel.model_validate(message)
+        except Exception:
+            logger.exception("插入用户消息失败")
+            raise
+
+
+Messages = MessageTable()
