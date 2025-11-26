@@ -32,7 +32,16 @@ package = false
 [tool.pyrefly]
 project-includes = ["**/*.py*", "**/*.ipynb"]
 
-project-excludes = [".venv", "__pycache__", "build", "dist", ".claude"]
+project-excludes = [
+    ".venv",
+    "__pycache__",
+    "build",
+    "dist",
+    ".claude",
+    ".history",
+    ".vscode",
+    "debug_streams",
+]
 
 strict = true
 

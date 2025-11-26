@@ -21,17 +21,8 @@ class LLMError(Exception):
 async def make_llm_api_call(
     messages: List[Dict[str, Any]],
     model_name: str,
-    response_format: Optional[Any] = None,
-    temperature: float = 0,
-    max_tokens: Optional[int] = None,
     tools: Optional[List[Dict[str, Any]]] = None,
-    api_key: Optional[str] = None,
-    api_base: Optional[str] = None,
     stream: bool = True,  # 始终使用流式传输以获得更好的用户体验
-    top_p: Optional[float] = None,
-    model_id: Optional[str] = None,
-    headers: Optional[Dict[str, str]] = None,
-    extra_headers: Optional[Dict[str, str]] = None,
     system_prompt: Optional[str] = None,
     prompt: Optional[str] = None,
 ) -> Union[Dict[str, Any], AsyncGenerator]:

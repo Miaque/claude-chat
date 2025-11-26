@@ -192,10 +192,10 @@ async def run_agent_background(
         # 使用取消事件初始化 Agent 生成器
         agent_gen = run_agent(
             thread_id=thread_id,
+            model_name=model_name,
             project_id=project_id,
             agent_config=agent_config,
             cancellation_event=cancellation_event,
-            native_max_auto_continues=0
         )
 
         final_status = "running"

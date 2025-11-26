@@ -2,8 +2,7 @@ import asyncio
 import datetime
 import json
 from dataclasses import dataclass
-from typing import Any, AsyncGenerator, Dict, Optional
-from uuid import UUID
+from typing import Any, AsyncGenerator, Optional
 
 from loguru import logger
 
@@ -21,8 +20,6 @@ from models.thread import Thread
 class AgentConfig:
     thread_id: str
     project_id: str
-    native_max_auto_continues: int = 25
-    max_iterations: int = 100
     model_name: str = "glm-4.6"
     agent_config: Optional[dict] = None
 
@@ -45,7 +42,7 @@ class PromptManager:
             system_content = default_system_content
 
         now = datetime.datetime.now()
-        datetime_info = f"\n\n=== 当前日期/时间信息 ===\n"
+        datetime_info = "\n\n=== 当前日期/时间信息 ===\n"
         datetime_info += f"今天的日期: {now.strftime('%A, %B %d, %Y')}\n"
         datetime_info += f"当前年份: {now.strftime('%Y')}\n"
         datetime_info += f"当前月份: {now.strftime('%B')}\n"
@@ -153,9 +150,6 @@ class AgentRunner:
             )
 
         temporary_message = None
-        # 默认不设置max_tokens - 让LiteLLM和提供商处理自己的默认值
-        max_tokens = None
-        logger.debug(f"max_tokens: {max_tokens} (使用提供商默认值)")
         try:
             logger.debug(f"开始为 {self.config.thread_id} 执行线程")
             response = await self.thread_manager.run_thread(
@@ -163,16 +157,12 @@ class AgentRunner:
                 system_prompt=system_message,
                 stream=True,
                 llm_model=self.config.model_name,
-                llm_temperature=0,
-                llm_max_tokens=max_tokens,
                 tool_choice="auto",
-                max_xml_tool_calls=1,
                 temporary_message=temporary_message,
                 latest_user_message_content=latest_user_message_content,
                 processor_config=ProcessorConfig(
                     execute_on_stream=True,
                 ),
-                native_max_auto_continues=self.config.native_max_auto_continues,
                 cancellation_event=cancellation_event,
             )
 
@@ -245,20 +235,14 @@ async def run_agent(
     thread_id: str,
     project_id: str,
     thread_manager: Optional[ThreadManager] = None,
-    native_max_auto_continues: int = 25,
-    max_iterations: int = 100,
     model_name: str = "glm-4.6",
     agent_config: Optional[dict] = None,
     cancellation_event: Optional[asyncio.Event] = None,
 ):
-    effective_model = model_name
-
     config = AgentConfig(
         thread_id=thread_id,
         project_id=project_id,
-        native_max_auto_continues=native_max_auto_continues,
-        max_iterations=max_iterations,
-        model_name=effective_model,
+        model_name=model_name,
         agent_config=agent_config,
     )
 

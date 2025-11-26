@@ -184,10 +184,6 @@ class ResponseProcessor:
         prompt_messages: List[Dict[str, Any]],
         llm_model: str,
         config: ProcessorConfig = ProcessorConfig(),
-        can_auto_continue: bool = False,
-        auto_continue_count: int = 0,
-        continuous_state: Optional[Dict[str, Any]] = None,
-        estimated_total_tokens: Optional[int] = None,
         cancellation_event: Optional[asyncio.Event] = None,
     ) -> AsyncGenerator[Dict[str, Any], None]:
         """处理流式LLM响应，处理工具调用和执行。
@@ -198,9 +194,7 @@ class ResponseProcessor:
             prompt_messages: 发送给LLM的消息列表（提示）
             llm_model: 使用的LLM模型名称
             config: 解析和执行的配置
-            can_auto_continue: 是否启用自动继续
-            auto_continue_count: 自动继续的循环次数
-            continuous_state: 对话的先前状态
+            cancellation_event: 取消事件
 
         生成:
             完整的消息对象，匹配数据库模式，除了内容块。
@@ -804,7 +798,6 @@ class ResponseProcessor:
         prompt_messages: List[Dict[str, Any]],
         llm_model: str,
         config: ProcessorConfig = ProcessorConfig(),
-        estimated_total_tokens: Optional[int] = None,
     ) -> AsyncGenerator[Dict[str, Any], None]:
         """处理非流式LLM响应，处理工具调用和执行。
 

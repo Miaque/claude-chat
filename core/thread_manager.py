@@ -142,7 +142,7 @@ class ThreadManager:
                                 Message.meta,
                             )
                             .filter(Message.thread_id == thread_id)
-                            .filter(Message.is_llm_message == True)
+                            .filter(Message.is_llm_message)
                             .order_by(Message.created_at)
                             .offset(offset)
                             .limit(batch_size)
@@ -192,13 +192,9 @@ class ThreadManager:
         system_prompt: Dict[str, Any],
         stream: bool = True,
         temporary_message: Optional[Dict[str, Any]] = None,
-        llm_model: str = "gpt-5",
-        llm_temperature: float = 0,
-        llm_max_tokens: Optional[int] = None,
+        llm_model: str = "glm-4.6",
         processor_config: Optional[ProcessorConfig] = None,
         tool_choice: ToolChoice = "auto",
-        native_max_auto_continues: int = 25,
-        max_xml_tool_calls: int = 0,
         latest_user_message_content: Optional[str] = None,
         cancellation_event: Optional[asyncio.Event] = None,
     ) -> Union[Dict[str, Any], AsyncGenerator]:
@@ -216,63 +212,56 @@ class ThreadManager:
             )
             config = ProcessorConfig()
 
-        auto_continue_state = {
-            "count": 0,
-            "active": True,
-            "continuous_state": {"accumulated_content": "", "thread_run_id": None},
-        }
+        # auto_continue_state = {
+        #     "count": 0,
+        #     "active": True,
+        #     "continuous_state": {"accumulated_content": "", "thread_run_id": None},
+        # }
 
-        # 如果禁用自动继续，则单次执行
-        if native_max_auto_continues == 0:
-            result = await self._execute_run(
-                thread_id,
-                system_prompt,
-                llm_model,
-                llm_temperature,
-                llm_max_tokens,
-                tool_choice,
-                config,
-                stream,
-                auto_continue_state,
-                temporary_message,
-                latest_user_message_content,
-                cancellation_event,
-            )
-
-            # 如果结果是错误字典，将其转换为生成器并产出错误
-            if isinstance(result, dict) and result.get("status") == "error":
-                return self._create_single_error_generator(result)
-
-            return result
-
-        # 自动继续执行
-        return self._auto_continue_generator(
+        result = await self._execute_run(
             thread_id,
             system_prompt,
             llm_model,
-            llm_temperature,
-            llm_max_tokens,
             tool_choice,
             config,
             stream,
-            auto_continue_state,
+            # auto_continue_state,
             temporary_message,
-            native_max_auto_continues,
             latest_user_message_content,
             cancellation_event,
         )
+
+        # 如果结果是错误字典，将其转换为生成器并产出错误
+        if isinstance(result, dict) and result.get("status") == "error":
+            return self._create_single_error_generator(result)
+
+        return result
+
+        # # 自动继续执行
+        # return self._auto_continue_generator(
+        #     thread_id,
+        #     system_prompt,
+        #     llm_model,
+        #     llm_temperature,
+        #     llm_max_tokens,
+        #     tool_choice,
+        #     config,
+        #     stream,
+        #     auto_continue_state,
+        #     temporary_message,
+        #     native_max_auto_continues,
+        #     latest_user_message_content,
+        #     cancellation_event,
+        # )
 
     async def _execute_run(
         self,
         thread_id: str,
         system_prompt: Dict[str, Any],
         llm_model: str,
-        llm_temperature: float,
-        llm_max_tokens: Optional[int],
         tool_choice: ToolChoice,
         config: ProcessorConfig,
         stream: bool,
-        auto_continue_state: Dict[str, Any],
         temporary_message: Optional[Dict[str, Any]] = None,
         latest_user_message_content: Optional[str] = None,
         cancellation_event: Optional[asyncio.Event] = None,
@@ -287,23 +276,7 @@ class ThreadManager:
             config = ProcessorConfig()  # 创建新实例作为后备
 
         try:
-            estimated_total_tokens = None  # 将传递给响应处理器以避免重新计算
-
-            # 关键: 首先检查这是否是自动继续迭代(在任何token计数之前)
-            is_auto_continue = auto_continue_state.get("count", 0) > 0
-
-            # 始终获取消息(需要用于LLM调用)
-            # 快速路径只是跳过压缩，而不是获取！
             messages = await self.get_llm_messages(thread_id)
-
-            # 处理自动继续上下文
-            if auto_continue_state["count"] > 0 and auto_continue_state[
-                "continuous_state"
-            ].get("accumulated_content"):
-                partial_content = auto_continue_state["continuous_state"][
-                    "accumulated_content"
-                ]
-                messages.append({"role": "assistant", "content": partial_content})
 
             # 获取LLM调用的工具模式(在压缩之后)
             openapi_tool_schemas = None
@@ -319,8 +292,6 @@ class ThreadManager:
                 llm_response = await make_llm_api_call(
                     prepared_messages,
                     llm_model,
-                    temperature=llm_temperature,
-                    max_tokens=llm_max_tokens,
                     tools=openapi_tool_schemas,
                     stream=stream,
                 )
@@ -338,10 +309,6 @@ class ThreadManager:
                     prepared_messages,
                     llm_model,
                     config,
-                    True,
-                    auto_continue_state["count"],
-                    auto_continue_state["continuous_state"],
-                    estimated_total_tokens,
                     cancellation_event,
                 )
             else:
@@ -351,7 +318,6 @@ class ThreadManager:
                     prepared_messages,
                     llm_model,
                     config,
-                    estimated_total_tokens,
                 )
 
         except Exception as e:
@@ -378,13 +344,6 @@ class ThreadManager:
         cancellation_event: Optional[asyncio.Event] = None,
     ) -> AsyncGenerator:
         """处理自动继续逻辑的生成器。"""
-        logger.debug(f"启动自动继续生成器，最大次数: {native_max_auto_continues}")
-        # logger.debug(f"自动继续生成器中的Config类型: {type(config)}")
-
-        # 确保config是有效的ProcessorConfig
-        if not isinstance(config, ProcessorConfig):
-            logger.error(f"自动继续中无效的config类型: {type(config)}，创建新的")
-            config = ProcessorConfig()
 
         while (
             auto_continue_state["active"]
@@ -402,12 +361,10 @@ class ThreadManager:
                     thread_id,
                     system_prompt,
                     llm_model,
-                    llm_temperature,
-                    llm_max_tokens,
                     tool_choice,
                     config,
                     stream,
-                    auto_continue_state,
+                    # auto_continue_state,
                     temporary_message if auto_continue_state["count"] == 0 else None,
                     latest_user_message_content
                     if auto_continue_state["count"] == 0
