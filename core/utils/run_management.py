@@ -11,17 +11,17 @@ from run_agent_background import _cleanup_redis_response_list, update_agent_run_
 
 
 async def cleanup_instance_runs(instance_id: str):
-    """清理特定实例的所有运行中的 agent。"""
-    logger.debug(f"开始清理实例 {instance_id} 的 agent 运行")
+    """清理指定实例的所有运行中agent"""
+    logger.debug(f"开始清理实例 {instance_id} 的agent运行")
 
     try:
         if not instance_id:
-            logger.warning("实例 ID 未设置，无法清理实例特定的 agent 运行。")
+            logger.warning("未设置实例ID，无法清理实例特定的agent运行。")
             return
 
         running_keys = await redis.keys(f"active_run:{instance_id}:*")
         logger.debug(
-            f"找到 {len(running_keys)} 个需要清理的实例 {instance_id} 的运行中 agent"
+            f"找到实例 {instance_id} 需要清理的 {len(running_keys)} 个运行中agent"
         )
 
         for key in running_keys:
@@ -33,10 +33,10 @@ async def cleanup_instance_runs(instance_id: str):
                     agent_run_id, error_message=f"实例 {instance_id} 正在关闭"
                 )
             else:
-                logger.warning(f"发现意外的键格式: {key}")
+                logger.warning(f"发现了不符合预期格式的key: {key}")
 
     except Exception as e:
-        logger.error(f"清理实例 {instance_id} 的运行中 agent 失败: {str(e)}")
+        logger.error("清理实例 {} 的运行中 agent 失败: {}", instance_id, e)
 
 
 async def stop_agent_run_with_helpers(

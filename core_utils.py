@@ -12,7 +12,7 @@ instance_id = None
 
 
 async def cleanup():
-    """在关闭时清理资源并停止正在运行的 agent。"""
+    """清理资源并在关闭时停止正在运行的agent。"""
     logger.debug("开始清理 agent API 资源")
 
     # 清理实例特定的 agent 运行
