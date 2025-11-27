@@ -25,3 +25,12 @@ def test_query_thread():
         print(f"{thread.account_id!r}")
         print(f"{thread.meta!r}")
         print("\n")
+
+
+def test_query_thread_id():
+    response = Threads.get_by_id(
+        "a25090dd-90ad-439f-977e-16a499335fd4", Thread.account_id
+    )
+
+    if response:
+        print(response.account_id)

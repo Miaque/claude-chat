@@ -60,9 +60,7 @@ class ThreadTable:
             raise
 
     @staticmethod
-    def get_by_id(
-        thread_id: str, *fields: ColumnElement
-    ) -> ThreadModel | None | Thread:
+    def get_by_id(thread_id: str, *fields) -> ThreadModel | None | Thread:
         try:
             with get_db() as db:
                 # 如果指定了 fields，只查询指定字段

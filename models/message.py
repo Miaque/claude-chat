@@ -75,5 +75,21 @@ class MessageTable:
             logger.exception("插入用户消息失败")
             raise
 
+    @staticmethod
+    def get_latest_user_message(thread_id: str) -> MessageModel | None:
+        try:
+            with get_db() as db:
+                message = (
+                    db.query(Message)
+                    .filter(Message.thread_id == thread_id)
+                    .filter(Message.type == "user")
+                    .order_by(Message.created_at.desc())
+                    .first()
+                )
+                return MessageModel.model_validate(message) if message else None
+        except Exception:
+            logger.exception("获取最新的用户消息失败")
+            raise
+
 
 Messages = MessageTable()

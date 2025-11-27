@@ -9,11 +9,10 @@ from loguru import logger
 from core.error_processor import ErrorProcessor
 from core.prompts.prompt import get_system_prompt
 from core.response_processor import ProcessorConfig
-from core.services.db import get_db
 from core.thread_manager import ThreadManager
-from models.message import Message
-from models.project import Project, ProjectModel
-from models.thread import Thread
+from models.message import Messages
+from models.project import Projects
+from models.thread import Thread, Threads
 
 
 @dataclass
@@ -81,32 +80,19 @@ class AgentRunner:
     async def setup(self):
         self.thread_manager = ThreadManager(agent_config=self.config.agent_config)
 
-        with get_db() as db:
-            response = (
-                db.query(Thread.account_id)
-                .filter(Thread.thread_id == self.config.thread_id)
-                .first()
-            )
-
+        response = Threads.get_by_id(self.config.thread_id, Thread.account_id)
         if not response:
             raise ValueError(f"未找到线程 {self.config.thread_id}")
 
-        self.account_id = str(response.account_id)
+        self.account_id = response.account_id
 
         if not self.account_id:
             raise ValueError(f"线程 {self.config.thread_id} 没有关联的账户")
 
-        with get_db() as db:
-            project = (
-                db.query(Project)
-                .filter(Project.project_id == self.config.project_id)
-                .first()
-            )
-
-        if not project:
+        project_data = Projects.get_by_id(self.config.project_id)
+        if not project_data:
             raise ValueError(f"未找到项目 {self.config.project_id}")
 
-        project_data = ProjectModel.model_validate(project)
         sandbox_info = project_data.sandbox
         if not sandbox_info.get("id"):
             logger.debug(
@@ -130,14 +116,7 @@ class AgentRunner:
         )
         logger.debug(f"收到 model_name: {self.config.model_name}")
 
-        with get_db() as db:
-            latest_user_message = (
-                db.query(Message)
-                .filter(Message.thread_id == self.config.thread_id)
-                .filter(Message.type == "user")
-                .order_by(Message.created_at.desc())
-                .first()
-            )
+        latest_user_message = Messages.get_latest_user_message(self.config.thread_id)
 
         latest_user_message_content = None
         if latest_user_message:

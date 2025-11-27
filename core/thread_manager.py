@@ -11,8 +11,8 @@ from core.response_processor import ProcessorConfig, ResponseProcessor
 from core.services.db import get_db
 from core.services.llm import LLMError, make_llm_api_call
 from core.tool import Tool
-from models.message import Message, MessageModel
-from models.thread import Thread
+from models.message import Message, Messages
+from models.thread import Thread, Threads
 
 ToolChoice = Literal["auto", "required", "none"]
 
@@ -58,22 +58,10 @@ class ThreadManager:
         if project_id:
             thread_data["project_id"] = project_id
 
-        try:
-            with get_db() as db:
-                thread = Thread(**thread_data)
-                db.add(thread)
-                db.commit()
-                db.refresh(thread)
-
-            if thread:
-                thread_id = thread.thread_id
-                logger.info(f"成功创建线程: {thread_id}")
-                return thread_id
-            else:
-                raise Exception("创建线程失败: 未返回thread_id")
-        except Exception as e:
-            logger.error(f"创建线程失败: {str(e)}", exc_info=True)
-            raise Exception(f"线程创建失败: {str(e)}")
+        thread = Threads.insert(Thread(**thread_data))
+        thread_id = thread.thread_id
+        logger.info("成功创建线程: {}", thread_id)
+        return thread_id
 
     async def add_message(
         self,
@@ -104,23 +92,9 @@ class ThreadManager:
         if agent_version_id:
             data_to_insert["agent_version_id"] = agent_version_id
 
-        try:
-            with get_db() as db:
-                message = Message(**data_to_insert)
-                db.add(message)
-                db.commit()
-                db.refresh(message)
-
-            if message:
-                saved_message = MessageModel.model_validate(message)
-
-                return saved_message.model_dump(mode="json")
-            else:
-                logger.error(f"线程 {thread_id} 的插入操作失败")
-                return None
-        except Exception as e:
-            logger.exception(f"向线程 {thread_id} 添加消息失败")
-            raise
+        message = Message(**data_to_insert)
+        saved_message = Messages.insert(message)
+        return saved_message.model_dump(mode="json")
 
     async def get_llm_messages(self, thread_id: str) -> List[Dict[str, Any]]:
         """获取线程的所有消息。"""
@@ -201,7 +175,7 @@ class ThreadManager:
         """运行对话线程，集成LLM和工具执行。"""
         logger.debug(f"🚀 开始执行线程 {thread_id}，使用模型 {llm_model}")
 
-        # 确保我们有有效的ProcessorConfig对象
+        # 确保ProcessorConfig对象有效
         if processor_config is None:
             config = ProcessorConfig()
         elif isinstance(processor_config, ProcessorConfig):
@@ -211,12 +185,6 @@ class ThreadManager:
                 f"无效的processor_config类型: {type(processor_config)}，创建默认值"
             )
             config = ProcessorConfig()
-
-        # auto_continue_state = {
-        #     "count": 0,
-        #     "active": True,
-        #     "continuous_state": {"accumulated_content": "", "thread_run_id": None},
-        # }
 
         result = await self._execute_run(
             thread_id,

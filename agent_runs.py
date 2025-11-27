@@ -80,16 +80,16 @@ async def _create_agent_run_record(thread_id: str, effective_model: str) -> str:
     )
     agent_run = AgentRuns.insert(agent_run)
 
-    agent_run_id = str(agent_run.id)
+    agent_run_id = agent_run.id
     structlog.contextvars.bind_contextvars(agent_run_id=agent_run_id)
-    logger.debug(f"创建新的代理运行: {agent_run_id}")
+    logger.debug("创建新的代理运行: {}", agent_run_id)
 
     # 在Redis中注册运行
     instance_key = f"active_run:{core_utils.instance_id}:{agent_run_id}"
     try:
         await redis.set(instance_key, "running", ex=redis.REDIS_KEY_TTL)
     except Exception as e:
-        logger.warning(f"在Redis中注册代理运行记录失败 ({instance_key}): {str(e)}")
+        logger.warning("在Redis中注册代理运行记录失败 ({}): {}", instance_key, e)
 
     return agent_run_id
 
@@ -180,8 +180,8 @@ async def unified_agent_start(
             if not thread_data:
                 raise HTTPException(status_code=404, detail="未找到线程")
 
-            project_id = str(thread_data.project_id)
-            thread_account_id = str(thread_data.account_id)
+            project_id = thread_data.project_id or ""
+            thread_account_id = thread_data.account_id or ""
             thread_metadata = thread_data.meta
 
             structlog.contextvars.bind_contextvars(
@@ -258,8 +258,8 @@ async def unified_agent_start(
                 )
             )
 
-            project_id = str(project.project_id)
-            logger.info(f"创建新项目: {project_id}")
+            project_id = project.project_id
+            logger.info("创建新项目: {}", project_id)
 
             # 创建线程
             current_time = datetime.now()
@@ -278,8 +278,8 @@ async def unified_agent_start(
             )
 
             thread = Threads.insert(Thread(**thread_data))
-            thread_id = str(thread.thread_id)
-            logger.debug(f"创建新线程: {thread_id}")
+            thread_id = thread.thread_id
+            logger.debug("创建新线程: {}", thread_id)
 
             # 触发后台命名任务
             asyncio.create_task(
@@ -323,7 +323,7 @@ async def unified_agent_start(
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"统一代理启动失败: {str(e)}\n{traceback.format_exc()}")
+        logger.exception("统一代理启动失败")
         # 记录实际错误详情用于调试
         error_details = {
             "error": str(e),

@@ -56,8 +56,8 @@ async def generate_and_update_project_name(project_id: str, prompt: str):
         generated_name = None
         selected_icon = None
 
-        if response and response.get("result"):
-            raw_content = response.get("result").strip()
+        if response and isinstance(response, dict) and response.get("result"):
+            raw_content = response["result"].strip()
             try:
                 parsed_response = json.loads(raw_content)
 

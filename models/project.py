@@ -63,5 +63,27 @@ class ProjectTable:
             logger.exception("创建新项目失败")
             raise
 
+    @staticmethod
+    def get_by_id(project_id: str, *fields) -> ProjectModel | Project | None:
+        try:
+            with get_db() as db:
+                if fields:
+                    response = (
+                        db.query(*fields)
+                        .filter(Project.project_id == project_id)
+                        .first()
+                    )
+                    return response if response else None
+                else:
+                    response = (
+                        db.query(Project)
+                        .filter(Project.project_id == project_id)
+                        .first()
+                    )
+                return ProjectModel.model_validate(response)
+        except Exception:
+            logger.exception("根据id查询项目失败")
+            raise
+
 
 Projects = ProjectTable()
