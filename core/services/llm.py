@@ -38,6 +38,7 @@ async def make_llm_api_call(
         ),
         include_partial_messages=True if stream else False,
         allowed_tools=["WebFetch", "WebSearch"],
+        resume=session_id if session_id else None,
     )
 
     if stream:

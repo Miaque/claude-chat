@@ -34,6 +34,7 @@ from core.utils.json_helpers import (
     safe_json_parse,
     to_json_string,
 )
+from models.thread import Threads
 
 # XML结果添加策略的类型别名
 XmlAddingStrategy = Literal["user_message", "assistant_message", "inline_edit"]
@@ -333,6 +334,8 @@ class ResponseProcessor:
                     logger.debug("📋 收到系统初始化消息")
                     system_message = cast(SystemMessage, chunk)
                     session_id = system_message.data.get("session_id")
+                    if session_id:
+                        Threads.update_session_id(thread_id, session_id)
                     continue
 
                 # --- 2. 处理 StreamEvent（流式事件） ---

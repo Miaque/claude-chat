@@ -248,6 +248,8 @@ class ThreadManager:
 
         try:
             messages = await self.get_llm_messages(thread_id)
+            thread = Threads.get_by_id(thread_id, Thread.session_id)
+            session_id = thread.session_id if thread else None
 
             # 获取LLM调用的工具模式(在压缩之后)
             openapi_tool_schemas = None

@@ -4,7 +4,7 @@ from uuid import uuid4
 
 from loguru import logger
 from pydantic import BaseModel, ConfigDict
-from sqlalchemy import Boolean, ColumnElement, DateTime, func
+from sqlalchemy import Boolean, DateTime, func
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -28,6 +28,9 @@ class Thread(Base):
         DateTime, nullable=False, server_default=func.current_timestamp()
     )
     meta: Mapped[dict] = mapped_column(JSONB, nullable=True, default={})
+    session_id: Mapped[Optional[str]] = mapped_column(
+        StringUUID, nullable=True, index=True
+    )
 
 
 class ThreadModel(BaseModel):
@@ -38,6 +41,7 @@ class ThreadModel(BaseModel):
     created_at: datetime
     updated_at: datetime
     meta: Optional[dict] = {}
+    session_id: Optional[str] = None
 
     model_config = ConfigDict(
         from_attributes=True,
@@ -101,6 +105,18 @@ class ThreadTable:
             logger.exception(
                 f"根据ids => [{thread_ids}]和account_id => [{account_id}]查询线程失败"
             )
+            raise
+
+    @staticmethod
+    def update_session_id(thread_id: str, session_id: str):
+        try:
+            with get_db() as db:
+                db.query(Thread).filter(Thread.thread_id == thread_id).update(
+                    {"session_id": session_id, "created_at": datetime.now()}
+                )
+                db.commit()
+        except Exception:
+            logger.exception(f"更新线程 {thread_id} 的 session_id 失败")
             raise
 
 
