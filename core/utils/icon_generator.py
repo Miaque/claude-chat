@@ -741,9 +741,6 @@ Example response:
         response = await make_llm_api_call(
             messages=messages,
             model_name=model_name,
-            max_tokens=4000,
-            temperature=0.7,
-            response_format={"type": "json_object"},
             stream=False,
         )
 
@@ -756,6 +753,7 @@ Example response:
 
         if (
             response
+            and isinstance(response, dict)
             and response.get("choices")
             and response["choices"][0].get("message")
         ):

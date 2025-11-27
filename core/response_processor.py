@@ -13,8 +13,10 @@ from typing import (
     Literal,
     Optional,
     Union,
+    cast,
 )
 
+from claude_agent_sdk import SystemMessage
 from claude_agent_sdk.types import (
     AssistantMessage,
     TextBlock,
@@ -213,6 +215,7 @@ class ResponseProcessor:
         finish_reason = None  # 完成原因
         last_assistant_message_object = None  # 最后保存的assistant消息对象
         turn_count = 0  # 对话轮次计数
+        session_id = None  # claude code 会话ID
 
         # 存储完整的响应对象用于billing
         final_llm_response = None
@@ -328,6 +331,8 @@ class ResponseProcessor:
                 # --- 1. 处理 SystemMessage（初始化信息） ---
                 if chunk_type == "SystemMessage":
                     logger.debug("📋 收到系统初始化消息")
+                    system_message = cast(SystemMessage, chunk)
+                    session_id = system_message.data.get("session_id")
                     continue
 
                 # --- 2. 处理 StreamEvent（流式事件） ---
@@ -784,6 +789,7 @@ class ResponseProcessor:
                         if "thread_run_id" in locals()
                         else None
                     },
+                    session_id=session_id,
                 )
                 # 不要yield - finally块中的yield会导致问题
                 logger.info("✅ thread_run_end已保存")

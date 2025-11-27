@@ -25,6 +25,7 @@ async def make_llm_api_call(
     stream: bool = True,  # 始终使用流式传输以获得更好的用户体验
     system_prompt: Optional[str] = None,
     prompt: Optional[str] = None,
+    session_id: Optional[str] = None,
 ) -> Union[Dict[str, Any], AsyncGenerator]:
     """使用Claude SDK进行语言模型API调用。"""
     logger.info(f"正在向模型发起LLM API调用: {model_name}，包含 {len(messages)} 条消息")

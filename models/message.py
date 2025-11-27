@@ -31,6 +31,7 @@ class Message(Base):
     )
     agent_id: Mapped[Optional[str]] = mapped_column(StringUUID, index=True)
     agent_version_id: Mapped[Optional[str]] = mapped_column(StringUUID, index=True)
+    session_id: Mapped[Optional[str]] = mapped_column(StringUUID, index=True)
 
 
 class MessageModel(BaseModel):
@@ -44,6 +45,7 @@ class MessageModel(BaseModel):
     updated_at: datetime
     agent_id: Optional[str] = None
     agent_version_id: Optional[str] = None
+    session_id: Optional[str] = None
 
     model_config = ConfigDict(
         from_attributes=True,

@@ -72,6 +72,7 @@ class ThreadManager:
         metadata: Optional[Dict[str, Any]] = None,
         agent_id: Optional[str] = None,
         agent_version_id: Optional[str] = None,
+        session_id: Optional[str] = None,
     ):
         """向线程中添加消息到数据库。"""
         # logger.debug(f"向线程 {thread_id} 添加类型为 '{type}' 的消息")
@@ -91,6 +92,8 @@ class ThreadManager:
             data_to_insert["agent_id"] = agent_id
         if agent_version_id:
             data_to_insert["agent_version_id"] = agent_version_id
+        if session_id:
+            data_to_insert["session_id"] = session_id
 
         message = Message(**data_to_insert)
         saved_message = Messages.insert(message)
@@ -262,6 +265,7 @@ class ThreadManager:
                     llm_model,
                     tools=openapi_tool_schemas,
                     stream=stream,
+                    session_id=session_id,
                 )
             except LLMError as e:
                 return {"type": "status", "status": "error", "message": str(e)}
