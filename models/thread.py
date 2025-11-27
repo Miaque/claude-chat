@@ -1,32 +1,39 @@
-import uuid
 from datetime import datetime
 from typing import Optional
 from uuid import uuid4
 
 from loguru import logger
 from pydantic import BaseModel, ConfigDict
-from sqlalchemy import UUID, Boolean, Column, DateTime, ColumnElement
+from sqlalchemy import Boolean, ColumnElement, DateTime, func
 from sqlalchemy.dialects.postgresql import JSONB
+from sqlalchemy.orm import Mapped, mapped_column
 
 from core.services.db import Base, get_db
+from models.types import StringUUID
 
 
 class Thread(Base):
     __tablename__ = "threads"
 
-    thread_id = Column(UUID(as_uuid=True), primary_key=True, index=True, default=uuid4)
-    account_id = Column(UUID(as_uuid=True), index=True)
-    project_id = Column(UUID(as_uuid=True), index=True)
-    is_public = Column(Boolean, default=False)
-    created_at = Column(DateTime, nullable=False, index=True)
-    updated_at = Column(DateTime, nullable=False)
-    meta = Column(JSONB, nullable=True, default={})
+    thread_id: Mapped[str] = mapped_column(
+        StringUUID, primary_key=True, index=True, default=lambda: str(uuid4())
+    )
+    account_id: Mapped[str] = mapped_column(StringUUID, index=True)
+    project_id: Mapped[str] = mapped_column(StringUUID, index=True)
+    is_public: Mapped[bool] = mapped_column(Boolean, default=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime, nullable=False, server_default=func.current_timestamp(), index=True
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime, nullable=False, server_default=func.current_timestamp()
+    )
+    meta: Mapped[dict] = mapped_column(JSONB, nullable=True, default={})
 
 
 class ThreadModel(BaseModel):
-    thread_id: uuid.UUID
-    account_id: Optional[uuid.UUID] = None
-    project_id: Optional[uuid.UUID] = None
+    thread_id: str
+    account_id: Optional[str] = None
+    project_id: Optional[str] = None
     is_public: Optional[bool] = False
     created_at: datetime
     updated_at: datetime

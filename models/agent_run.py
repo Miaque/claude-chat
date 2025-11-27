@@ -1,43 +1,52 @@
-import uuid
 from datetime import datetime
-from typing import List, Literal, Optional
+from typing import Literal, Optional
 from uuid import uuid4
 
 from loguru import logger
 from pydantic import BaseModel, ConfigDict
-from sqlalchemy import TEXT, UUID, Column, ColumnElement, DateTime
+from sqlalchemy import TEXT, ColumnElement, DateTime, func
 from sqlalchemy.dialects.postgresql import JSONB
+from sqlalchemy.orm import Mapped, mapped_column
 
 from core.services.db import Base, get_db
+from models.types import StringUUID
 
 
 class AgentRun(Base):
     __tablename__ = "agent_runs"
 
-    id = Column(UUID(as_uuid=True), primary_key=True, index=True, default=uuid4)
-    thread_id = Column(UUID(as_uuid=True), nullable=False, index=True)
-    status = Column(TEXT, nullable=False, default="running")
-    started_at = Column(DateTime, nullable=False)
-    completed_at = Column(DateTime, nullable=True)
-    error = Column(TEXT, nullable=True)
-    created_at = Column(DateTime, nullable=False)
-    updated_at = Column(DateTime, nullable=False)
-    agent_id = Column(UUID(as_uuid=True), nullable=True)
-    agent_version_id = Column(UUID(as_uuid=True), nullable=True)
-    meta = Column(JSONB, nullable=True, default={})
+    id: Mapped[str] = mapped_column(
+        StringUUID, primary_key=True, index=True, default=lambda: str(uuid4())
+    )
+    thread_id: Mapped[str] = mapped_column(StringUUID, nullable=False, index=True)
+    status: Mapped[str] = mapped_column(TEXT, nullable=False, default="running")
+    started_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
+    completed_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+    error: Mapped[Optional[str]] = mapped_column(TEXT, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime, nullable=False, server_default=func.current_timestamp()
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime,
+        nullable=False,
+        server_default=func.current_timestamp(),
+    )
+    agent_id: Mapped[Optional[str]] = mapped_column(StringUUID, nullable=True)
+    agent_version_id: Mapped[Optional[str]] = mapped_column(StringUUID, nullable=True)
+    meta: Mapped[dict] = mapped_column(JSONB, nullable=True, default={})
 
 
 class AgentRunModel(BaseModel):
-    id: uuid.UUID
-    thread_id: uuid.UUID
+    id: str
+    thread_id: str
     status: Literal["running", "completed", "failed"]
     started_at: datetime
     completed_at: Optional[datetime] = None
     error: Optional[str] = None
     created_at: datetime
     updated_at: datetime
-    agent_id: Optional[uuid.UUID] = None
-    agent_version_id: Optional[uuid.UUID] = None
+    agent_id: Optional[str] = None
+    agent_version_id: Optional[str] = None
     meta: Optional[dict] = {}
 
     model_config = ConfigDict(
@@ -99,6 +108,28 @@ class AgentRunTable:
                     )
         except Exception:
             logger.exception("获取正在运行的agent运行记录失败")
+            raise
+
+    @staticmethod
+    def update_status(
+        agent_run_id: str, status: str, error: Optional[str] = None
+    ) -> AgentRunModel | None:
+        try:
+            with get_db() as db:
+                agent_run = (
+                    db.query(AgentRun).filter(AgentRun.id == agent_run_id).first()
+                )
+                if agent_run:
+                    agent_run.status = status
+                    agent_run.completed_at = datetime.now()
+                    if error:
+                        agent_run.error = error
+                    db.commit()
+                    return AgentRunModel.model_validate(agent_run)
+                else:
+                    return None
+        except Exception:
+            logger.exception(f"更新agent运行记录状态失败: {agent_run_id}")
             raise
 
 

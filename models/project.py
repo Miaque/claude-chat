@@ -1,35 +1,42 @@
-import uuid
 from datetime import datetime
 from typing import Optional
 from uuid import uuid4
 
 from loguru import logger
 from pydantic import BaseModel, ConfigDict
-from sqlalchemy import UUID, Boolean, Column, DateTime, Text
+from sqlalchemy import Boolean, DateTime, Text, func
 from sqlalchemy.dialects.postgresql import JSONB
+from sqlalchemy.orm import Mapped, mapped_column
 
 from core.services.db import Base, get_db
+from models.types import StringUUID
 
 
 class Project(Base):
     __tablename__ = "projects"
 
-    project_id = Column(UUID(as_uuid=True), primary_key=True, index=True, default=uuid4)
-    name = Column(Text, nullable=False)
-    description = Column(Text)
-    account_id = Column(UUID(as_uuid=True), nullable=False, index=True)
-    sandbox = Column(JSONB, default={})
-    is_public = Column(Boolean, default=False)
-    created_at = Column(DateTime, nullable=False, index=True)
-    updated_at = Column(DateTime, nullable=False)
-    icon_name = Column(Text)
+    project_id: Mapped[str] = mapped_column(
+        StringUUID, primary_key=True, index=True, default=lambda: str(uuid4())
+    )
+    name: Mapped[str] = mapped_column(Text, nullable=False)
+    description: Mapped[Optional[str]] = mapped_column(Text)
+    account_id: Mapped[str] = mapped_column(StringUUID, nullable=False, index=True)
+    sandbox: Mapped[dict] = mapped_column(JSONB, default={})
+    is_public: Mapped[bool] = mapped_column(Boolean, default=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime, nullable=False, server_default=func.current_timestamp(), index=True
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime, nullable=False, server_default=func.current_timestamp()
+    )
+    icon_name: Mapped[Optional[str]] = mapped_column(Text)
 
 
 class ProjectModel(BaseModel):
-    project_id: uuid.UUID
+    project_id: str
     name: str
     description: Optional[str] = None
-    account_id: uuid.UUID
+    account_id: str
     sandbox: dict
     is_public: bool
     created_at: datetime

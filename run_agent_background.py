@@ -9,13 +9,19 @@ import dramatiq
 import structlog
 from dramatiq.brokers.redis import RedisBroker
 from loguru import logger
-from tenacity import AsyncRetrying, stop_after_attempt, wait_fixed
+from tenacity import (
+    AsyncRetrying,
+    Retrying,
+    stop_after_attempt,
+    wait_exponential,
+    wait_fixed,
+)
 
 from configs import app_config
 from core.run import run_agent
 from core.services import redis
 from core.services.db import get_db
-from models.agent_run import AgentRun
+from models.agent_run import AgentRun, AgentRuns
 
 logger.info(
     f"正在配置 Dramatiq 代理，Redis 地址: {app_config.REDIS_HOST}:{app_config.REDIS_PORT}"
@@ -389,66 +395,31 @@ async def update_agent_run_status(
     error: Optional[str] = None,
 ) -> bool:
     """
-    Centralized function to update agent run status.
-    Returns True if update was successful.
+    更新agent运行状态。
+    如果更新成功则返回True。
     """
     try:
-        # 最多重试 3 次
-        for retry in range(3):
-            try:
-                with get_db() as db:
-                    agent_run = (
-                        db.query(AgentRun).filter(AgentRun.id == agent_run_id).first()
-                    )
-                    if agent_run:
-                        agent_run.status = status
-                        agent_run.completed_at = datetime.now()
-                        if error:
-                            agent_run.error = error
-                        db.commit()
+        # 使用 tenacity 的 Retrying 进行重试，最多重试 3 次
+        for attempt in Retrying(
+            stop=stop_after_attempt(3),
+            wait=wait_exponential(multiplier=1, max=10),
+            retry_error_callback=lambda retry_state: False,  # 重试失败后返回 False
+            reraise=True,  # 重试失败后重新抛出异常
+        ):
+            with attempt:
+                agent_run = AgentRuns.update_status(agent_run_id, status, error)
 
-                if agent_run:
-                    # logger.debug(f"成功更新 Agent 运行 {agent_run_id} 状态为 '{status}' (重试 {retry})")
-
-                    # 验证更新
-                    with get_db() as db:
-                        verify_result = (
-                            db.query(AgentRun.status, AgentRun.completed_at)
-                            .filter(AgentRun.id == agent_run_id)
-                            .first()
-                        )
-
-                    if verify_result:
-                        actual_status = verify_result.status
-                        completed_at = verify_result.completed_at
-                        # logger.debug(f"验证 Agent 运行更新: status={actual_status}, completed_at={completed_at}")
-                    return True
-                else:
+                if not agent_run:
                     logger.warning(
-                        f"数据库更新未返回数据，Agent 运行: {agent_run_id}，重试: {retry}: {agent_run}"
+                        f"数据库更新未返回数据，Agent 运行: {agent_run_id}，重试: {attempt.retry_state.attempt_number}"
                     )
-                    if retry == 2:  # 最后一次重试
-                        logger.error(
-                            f"所有重试后更新 Agent 运行状态失败: {agent_run_id}"
-                        )
-                        return False
-            except Exception as db_error:
-                logger.error(
-                    f"更新状态时数据库错误，重试 {retry}，Agent 运行: {agent_run_id}: {str(db_error)}"
-                )
-                if retry < 2:  # 还不是最后一次重试
-                    await asyncio.sleep(0.5 * (2**retry))  # 指数退避
-                else:
-                    logger.error(
-                        f"所有重试后更新 Agent 运行状态失败: {agent_run_id}",
-                        exc_info=True,
-                    )
-                    return False
+                    raise Exception(f"数据库更新未返回数据: {agent_run_id}")
+
+                # 更新成功，返回 True
+                return True
+
     except Exception as e:
-        logger.error(
-            f"更新 Agent 运行状态时发生意外错误 {agent_run_id}: {str(e)}",
-            exc_info=True,
-        )
+        logger.error("更新 Agent 运行状态失败 {}: {}", agent_run_id, e)
         return False
 
     return False
