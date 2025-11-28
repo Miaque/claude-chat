@@ -481,9 +481,7 @@ async def stream_agent_run(
     logger.debug(f"开始代理运行的流式传输: {agent_run_id}")
 
     user_id = await get_user_id_from_stream_auth(request, token)  # 实际上瞬间完成
-    agent_run_data = await _get_agent_run_with_access_check(
-        agent_run_id, user_id
-    )  # 1次数据库查询
+    agent_run_data = await _get_agent_run_with_access_check(agent_run_id, user_id)
 
     structlog.contextvars.bind_contextvars(
         agent_run_id=agent_run_id,
@@ -667,12 +665,25 @@ async def stream_agent_run(
         finally:
             terminate_stream = True
             # 优雅关闭顺序: 取消订阅 → 关闭 → 取消
+            # 即使任务被取消，也要确保清理工作完成。
+            pubsub_cleaned = False
             try:
                 if "pubsub" in locals() and pubsub:
                     await pubsub.unsubscribe(response_channel, control_channel)
                     await pubsub.close()
+                    pubsub_cleaned = True
+                    logger.debug("已清理 {} 的 PubSub", agent_run_id)
+            except asyncio.CancelledError:
+                # 即使在取消时也要尝试清理
+                if "pubsub" in locals() and pubsub and not pubsub_cleaned:
+                    try:
+                        await pubsub.unsubscribe(response_channel, control_channel)
+                        await pubsub.close()
+                        logger.debug(f"{agent_run_id} 已取消，相关 PubSub 已清理完毕")
+                    except Exception:
+                        pass  # 忽略取消清理时的错误
             except Exception as e:
-                logger.debug(f"清理pubsub为 {agent_run_id} 时出错: {e}")
+                logger.warning("清理 {} 的 PubSub 时出错：{}", agent_run_id, e)
 
             if listener_task:
                 listener_task.cancel()
@@ -681,10 +692,10 @@ async def stream_agent_run(
                 except asyncio.CancelledError:
                     pass
                 except Exception as e:
-                    logger.debug(f"监听器任务以错误结束: {e}")
+                    logger.debug("listener_task 因 {} 退出", e)
             # 短暂等待任务取消
             await asyncio.sleep(0.1)
-            logger.debug(f"流式传输清理完成 for agent run: {agent_run_id}")
+            logger.debug("agent run {} 的流式清理已完成", agent_run_id)
 
     return StreamingResponse(
         stream_generator(agent_run_data),

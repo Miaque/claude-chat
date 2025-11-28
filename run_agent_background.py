@@ -20,8 +20,7 @@ from tenacity import (
 from configs import app_config
 from core.run import run_agent
 from core.services import redis
-from core.services.db import get_db
-from models.agent_run import AgentRun, AgentRuns
+from models.agent_run import AgentRuns
 
 logger.info(
     f"正在配置 Dramatiq 代理，Redis 地址: {app_config.REDIS_HOST}:{app_config.REDIS_PORT}"

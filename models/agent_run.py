@@ -83,7 +83,7 @@ class AgentRunTable:
 
     @staticmethod
     def get_running_agent_runs(
-        *fields: ColumnElement,
+        *fields,
     ) -> list[AgentRunModel] | list[AgentRun] | None:
         try:
             with get_db() as db:
