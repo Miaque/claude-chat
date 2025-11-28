@@ -1,4 +1,4 @@
-from typing import Any, Dict, List, Optional
+from typing import Any, Optional
 
 from pydantic import BaseModel
 
@@ -12,9 +12,9 @@ class AgentVersionResponse(BaseModel):
     version_name: str
     system_prompt: str
     model: Optional[str] = None
-    configured_mcps: List[Dict[str, Any]]
-    custom_mcps: List[Dict[str, Any]]
-    agentpress_tools: Dict[str, Any]
+    configured_mcps: list[dict[str, Any]]
+    custom_mcps: list[dict[str, Any]]
+    agentpress_tools: dict[str, Any]
     is_active: bool
     created_at: str
     updated_at: str
@@ -29,12 +29,12 @@ class AgentResponse(BaseModel):
     description: Optional[str] = None
     system_prompt: Optional[str] = None  # 列表操作可选，未加载配置时
     model: Optional[str] = None
-    configured_mcps: List[Dict[str, Any]]
-    custom_mcps: List[Dict[str, Any]]
-    agentpress_tools: Dict[str, Any]
+    configured_mcps: list[dict[str, Any]]
+    custom_mcps: list[dict[str, Any]]
+    agentpress_tools: dict[str, Any]
     is_default: bool
     is_public: Optional[bool] = False
-    tags: Optional[List[str]] = []
+    tags: Optional[list[str]] = []
     icon_name: Optional[str] = None
     icon_color: Optional[str] = None
     icon_background: Optional[str] = None
@@ -43,7 +43,7 @@ class AgentResponse(BaseModel):
     current_version_id: Optional[str] = None
     version_count: Optional[int] = 1
     current_version: Optional[AgentVersionResponse] = None
-    metadata: Optional[Dict[str, Any]] = None
+    metadata: Optional[dict[str, Any]] = None
     account_id: Optional[str] = None  # 内部字段，响应中可能不需要
 
 

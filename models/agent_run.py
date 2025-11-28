@@ -65,7 +65,7 @@ class AgentRunTable:
                     agent_run = (
                         db.query(*fields).filter(AgentRun.id == agent_run_id).first()
                     )
-                    return agent_run if agent_run else None
+                    return agent_run or None
                 else:
                     agent_run = (
                         db.query(AgentRun).filter(AgentRun.id == agent_run_id).first()

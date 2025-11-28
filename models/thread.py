@@ -73,7 +73,7 @@ class ThreadTable:
                     result = (
                         db.query(*fields).filter(Thread.thread_id == thread_id).first()
                     )
-                    return result if result else None
+                    return result or None
 
                 # 没有指定 fields，查询完整对象
                 else:

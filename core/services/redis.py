@@ -1,5 +1,5 @@
 import asyncio
-from typing import Any, List, Optional
+from typing import Any, Optional
 
 import redis.asyncio as redis
 from loguru import logger
@@ -33,9 +33,7 @@ def initialize():
     connect_timeout = 10.0  # 10 秒连接超时
     retry_on_timeout = app_config.REDIS_RETRY_ON_TIMEOUT
 
-    logger.info(
-        f"初始化 Redis 连接池到 {redis_host}:{redis_port}，最大连接数 {max_connections}"
-    )
+    logger.info(f"初始化 Redis 连接池到 {redis_host}:{redis_port}，最大连接数 {max_connections}")
 
     # 使用生产环境优化设置创建连接池
     pool = redis.ConnectionPool(
@@ -73,7 +71,7 @@ async def initialize_async():
             await asyncio.wait_for(client.ping(), timeout=5.0)
             logger.info("成功连接到 Redis")
             _initialized = True
-        except asyncio.TimeoutError:
+        except TimeoutError:
             logger.error("初始化期间 Redis 连接超时")
             client = None
             _initialized = False
@@ -94,7 +92,7 @@ async def close():
         # logger.debug("正在关闭 Redis 连接")
         try:
             await asyncio.wait_for(client.aclose(), timeout=5.0)
-        except asyncio.TimeoutError:
+        except TimeoutError:
             logger.warning("Redis 关闭超时，强制关闭")
         except Exception as e:
             logger.warning(f"关闭 Redis 客户端时出错: {e}")
@@ -105,7 +103,7 @@ async def close():
         # logger.debug("正在关闭 Redis 连接池")
         try:
             await asyncio.wait_for(pool.aclose(), timeout=5.0)
-        except asyncio.TimeoutError:
+        except TimeoutError:
             logger.warning("Redis 连接池关闭超时，强制关闭")
         except Exception as e:
             logger.warning(f"关闭 Redis 连接池时出错: {e}")
@@ -163,7 +161,7 @@ async def rpush(key: str, *values: Any):
     return await redis_client.rpush(key, *values)
 
 
-async def lrange(key: str, start: int, end: int) -> List[str]:
+async def lrange(key: str, start: int, end: int) -> list[str]:
     """从列表获取指定范围的元素。"""
     redis_client = await get_client()
     return await redis_client.lrange(key, start, end)
@@ -172,7 +170,7 @@ async def lrange(key: str, start: int, end: int) -> List[str]:
 # 键管理
 
 
-async def keys(pattern: str) -> List[str]:
+async def keys(pattern: str) -> list[str]:
     """根据模式获取匹配的键。"""
     redis_client = await get_client()
     return await redis_client.keys(pattern)

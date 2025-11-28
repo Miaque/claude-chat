@@ -73,7 +73,7 @@ class ProjectTable:
                         .filter(Project.project_id == project_id)
                         .first()
                     )
-                    return response if response else None
+                    return response or None
                 else:
                     response = (
                         db.query(Project)

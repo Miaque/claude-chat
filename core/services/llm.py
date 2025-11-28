@@ -1,5 +1,6 @@
+from collections.abc import AsyncGenerator
 from dataclasses import asdict
-from typing import Any, AsyncGenerator, Dict, List, Optional, Union, cast
+from typing import Any, Optional, cast
 
 from claude_agent_sdk import ClaudeAgentOptions, ClaudeSDKClient
 from claude_agent_sdk.types import ResultMessage, SystemPromptPreset
@@ -19,14 +20,14 @@ class LLMError(Exception):
 
 
 async def make_llm_api_call(
-    messages: List[Dict[str, Any]],
+    messages: list[dict[str, Any]],
     model_name: str,
-    tools: Optional[List[Dict[str, Any]]] = None,
+    tools: Optional[list[dict[str, Any]]] = None,
     stream: bool = True,  # 始终使用流式传输以获得更好的用户体验
     system_prompt: Optional[str] = None,
     prompt: Optional[str] = None,
     session_id: Optional[str] = None,
-) -> Union[Dict[str, Any], AsyncGenerator]:
+) -> dict[str, Any] | AsyncGenerator:
     """使用Claude SDK进行语言模型API调用。"""
     logger.info(f"正在向模型发起LLM API调用: {model_name}，包含 {len(messages)} 条消息")
 
@@ -34,11 +35,11 @@ async def make_llm_api_call(
         system_prompt=SystemPromptPreset(
             type="preset",
             preset="claude_code",
-            append="总是使用中文回复" if not system_prompt else system_prompt,
+            append=system_prompt or "总是使用中文回复",
         ),
         include_partial_messages=True if stream else False,
         allowed_tools=["WebFetch", "WebSearch"],
-        resume=session_id if session_id else None,
+        resume=session_id or None,
     )
 
     if stream:
@@ -48,7 +49,7 @@ async def make_llm_api_call(
     # 非流式模式：在 async with 块内完成所有操作
     try:
         async with ClaudeSDKClient(options=options) as client:
-            prompt_text = prompt if prompt else cast(str, messages[-1]["content"])
+            prompt_text = prompt or cast(str, messages[-1]["content"])
             await client.query(prompt_text)
 
             response = client.receive_response()
@@ -67,7 +68,7 @@ async def make_llm_api_call(
 
 async def _create_streaming_response(
     options: ClaudeAgentOptions,
-    messages: List[Dict[str, Any]],
+    messages: list[dict[str, Any]],
     prompt: Optional[str] = None,
     model_name: Optional[str] = None,
 ) -> AsyncGenerator:
@@ -77,7 +78,7 @@ async def _create_streaming_response(
     """
     try:
         async with ClaudeSDKClient(options=options) as client:
-            prompt_text = prompt if prompt else cast(str, messages[-1]["content"])
+            prompt_text = prompt or cast(str, messages[-1]["content"])
             await client.query(prompt_text)
 
             response = client.receive_response()
