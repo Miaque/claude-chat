@@ -4,7 +4,7 @@ from uuid import uuid4
 
 from loguru import logger
 from pydantic import BaseModel, ConfigDict
-from sqlalchemy import TEXT, ColumnElement, DateTime, func
+from sqlalchemy import TEXT, DateTime, func
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -58,16 +58,24 @@ class AgentRunModel(BaseModel):
 
 class AgentRunTable:
     @staticmethod
-    def get_by_id(agent_run_id: str) -> AgentRunModel | None:
+    def get_by_id(agent_run_id: str, *fields) -> AgentRunModel | None:
         try:
             with get_db() as db:
-                agent_run = (
-                    db.query(AgentRun).filter(AgentRun.id == agent_run_id).first()
-                )
-                return AgentRunModel.model_validate(agent_run) if agent_run else None
+                if fields:
+                    agent_run = (
+                        db.query(*fields).filter(AgentRun.id == agent_run_id).first()
+                    )
+                    return agent_run if agent_run else None
+                else:
+                    agent_run = (
+                        db.query(AgentRun).filter(AgentRun.id == agent_run_id).first()
+                    )
+                    return (
+                        AgentRunModel.model_validate(agent_run) if agent_run else None
+                    )
         except Exception:
-            logger.exception(f"根据id => [{agent_run_id}]查询agent运行记录失败")
-            return None
+            logger.exception("根据id => [{}]查询agent运行记录失败", agent_run_id)
+            raise
 
     @staticmethod
     def insert(agent_run: AgentRun) -> AgentRunModel:
