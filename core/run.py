@@ -21,6 +21,7 @@ class AgentConfig:
     project_id: str
     model_name: str = "glm-4.6"
     agent_config: Optional[dict] = None
+    account_id: Optional[str] = None
 
 
 class PromptManager:
@@ -217,12 +218,14 @@ async def run_agent(
     model_name: str = "glm-4.6",
     agent_config: Optional[dict] = None,
     cancellation_event: Optional[asyncio.Event] = None,
+    account_id: Optional[str] = None
 ):
     config = AgentConfig(
         thread_id=thread_id,
         project_id=project_id,
         model_name=model_name,
         agent_config=agent_config,
+        account_id=account_id
     )
 
     runner = AgentRunner(config)

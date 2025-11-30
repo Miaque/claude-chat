@@ -3,7 +3,7 @@ import json
 import traceback
 import uuid
 from datetime import datetime
-from typing import Optional
+from typing import Any, Optional
 
 import structlog
 from fastapi import (
@@ -52,7 +52,9 @@ async def _get_effective_model(model_name: Optional[str], account_id: str) -> st
     return "glm-4.6"
 
 
-async def _create_agent_run_record(thread_id: str, effective_model: str) -> str:
+async def _create_agent_run_record(
+    thread_id: str, effective_model: str, actual_user_id: str, extra_metadata: Optional[dict[str, Any]] = None
+) -> str:
     """
     在数据库中创建代理运行
 
@@ -61,10 +63,17 @@ async def _create_agent_run_record(thread_id: str, effective_model: str) -> str:
         thread_id: 关联的线程ID
         agent_config: 代理配置字典
         effective_model: 使用的模型名称
+        actual_user_id: 实际发起运行的用户ID
+        extra_metadata: 额外的元数据
 
     返回:
         agent_run_id: 创建的代理运行记录ID
     """
+    run_metadata = {"model_name": effective_model, "actual_user_id": actual_user_id}
+
+    if extra_metadata:
+        run_metadata.update(extra_metadata)
+
     current_time = datetime.now()
     agent_run = AgentRun(
         **{
@@ -75,21 +84,29 @@ async def _create_agent_run_record(thread_id: str, effective_model: str) -> str:
             "updated_at": current_time,
             "agent_id": None,
             "agent_version_id": None,
-            "meta": {"model_name": effective_model},
+            "meta": run_metadata,
         }
     )
     agent_run = AgentRuns.insert(agent_run)
 
     agent_run_id = agent_run.id
     structlog.contextvars.bind_contextvars(agent_run_id=agent_run_id)
-    logger.debug("创建新的代理运行: {}", agent_run_id)
+    logger.debug(f"已新建 agent run：{agent_run_id}")
+
+    # 清除运行中缓存
+    # try:
+    #     from core.runtime_cache import invalidate_running_runs_cache
+
+    #     await invalidate_running_runs_cache(actual_user_id)
+    # except Exception as cache_error:
+    #     logger.warning(f"清除运行中缓存失败：{cache_error}")
 
     # 在Redis中注册运行
     instance_key = f"active_run:{core_utils.instance_id}:{agent_run_id}"
     try:
         await redis.set(instance_key, "running", ex=redis.REDIS_KEY_TTL)
     except Exception as e:
-        logger.warning("在Redis中注册代理运行记录失败 ({}): {}", instance_key, e)
+        logger.warning("在 Redis 中注册 agent run（{}）失败：{}", instance_key, e)
 
     return agent_run_id
 
@@ -99,7 +116,8 @@ async def _trigger_agent_background(
     thread_id: str,
     project_id: str,
     effective_model: str,
-    agent_config: Optional[dict],
+    agent_id: Optional[str] = None,
+    account_id: Optional[str] = None,
 ):
     """
     触发后台代理执行。
@@ -109,19 +127,176 @@ async def _trigger_agent_background(
         thread_id: 线程ID
         project_id: 项目ID
         effective_model: 模型名称
-        agent_config: 代理配置字典
+        agent_id: 智能体ID
+        account_id: 用户ID
     """
     request_id = structlog.contextvars.get_contextvars().get("request_id")
 
-    run_agent_background.send(
-        agent_run_id=agent_run_id,
-        thread_id=thread_id,
-        instance_id=core_utils.instance_id,
-        project_id=project_id,
-        model_name=effective_model,
-        agent_config=agent_config,
-        request_id=request_id,
-    )
+    try:
+        message = run_agent_background.send(
+            agent_run_id=agent_run_id,
+            thread_id=thread_id,
+            instance_id=core_utils.instance_id,
+            project_id=project_id,
+            model_name=effective_model,
+            agent_id=agent_id,
+            account_id=account_id,
+            request_id=request_id,
+        )
+        message_id = message.message_id if hasattr(message, "message_id") else "N/A"
+        logger.info(f"agent run {agent_run_id} 已成功发送至 Dramatiq 队列（消息 ID：{message_id}）")
+    except Exception as e:
+        logger.exception(f"agent run {agent_run_id} 发送至 Dramatiq 队列失败")
+        # raise HTTPException(status_code=500, detail=f"触发后台代理执行失败：{e}")
+        raise
+
+
+async def start_agent_run(
+    account_id: str,
+    prompt: str,
+    agent_id: Optional[str] = None,
+    model_name: Optional[str] = None,
+    thread_id: Optional[str] = None,
+    project_id: Optional[str] = None,
+    message_content: Optional[str] = None,  # 已预处理的内容（含文件引用）
+    metadata: Optional[dict[str, Any]] = None,
+) -> dict[str, Any]:
+    """
+    启动 agent run 的核心函数
+
+    供以下模块调用：
+        HTTP 端点（unified_agent_start）
+        触发器执行服务
+        任何其他内部调用者
+
+    消息创建规则：
+        新线程（thread_id=None）：必须用 prompt 创建一条用户消息
+        已有线程 + 提供 prompt：追加一条用户消息
+        已有线程 + 无 prompt：不创建消息（假定已通过 /threads/{id}/messages/add 添加）
+
+    支持两种客户端模式：
+        单次对话：POST /agent/start 带 prompt → 创建线程 + 消息 + 启动 agent
+        多次对话：先 POST /threads/{id}/messages/add，再 POST /agent/start（无 prompt）
+
+    参数:
+        account_id：用户账户 ID（必填）
+        prompt：用户输入（新线程必填，已有线程可选）
+        agent_id：指定 Agent（可选，默认按配置）
+        model_name：指定模型（可选，默认按层级的配置）
+        thread_id：沿用已有线程（传 None 则新建）
+        project_id：已有线程所属项目（若提供 thread_id 则必填）
+        message_content：外部已预处理的消息内容（含文件引用）
+        metadata：附加的 agent run 元数据
+        skip_limits_check：跳过计费/限额校验（预检过的调用者使用）
+
+    返回:
+        字典类型，包含 thread_id, agent_run_id, project_id, status
+    """
+    is_new_thread = thread_id is None
+
+    # 如果传了 message_content 就用它，否则用 prompt
+    final_message_content = message_content or prompt
+
+    # 获取有效模型
+    effective_model = await _get_effective_model(model_name, account_id)
+
+    if is_new_thread:
+        if not project_id:
+            project_id = str(uuid.uuid4())
+            placeholder_name = f"{prompt[:30]}..." if len(prompt) > 30 else prompt
+
+            current_time = datetime.now()
+            project = Projects.insert(
+                Project(
+                    **{
+                        "project_id": project_id,
+                        "account_id": account_id,
+                        "name": placeholder_name,
+                        "created_at": current_time,
+                        "updated_at": current_time,
+                    }
+                )
+            )
+            project_id = project.project_id
+
+            # 缓存项目信息
+            # try:
+            #     from core.runtime_cache import set_cached_project_metadata
+
+            #     await set_cached_project_metadata(project_id, {})
+            # except Exception:
+            #     pass
+
+            # 触发后台命名任务
+            asyncio.create_task(generate_and_update_project_name(project_id=project_id, prompt=prompt))
+
+        # 创建新线程
+        thread_id = str(uuid.uuid4())
+        current_time = datetime.now()
+        thread_data = {
+            "thread_id": thread_id,
+            "project_id": project_id,
+            "account_id": account_id,
+            "created_at": current_time,
+            "updated_at": current_time,
+        }
+        thread = Threads.insert(Thread(**thread_data))
+        thread_id = thread.thread_id
+        logger.debug("创建新线程: {}", thread_id)
+
+        structlog.contextvars.bind_contextvars(thread_id=thread_id, project_id=project_id, account_id=account_id)
+
+        # 更新线程计数缓存
+        # try:
+        #     from core.runtime_cache import increment_thread_count_cache
+
+        #     asyncio.create_task(increment_thread_count_cache(account_id))
+        # except Exception:
+        #     pass
+
+    # 创建 agent run
+    async def create_message():
+        """
+        消息创建逻辑：
+            新线程：必定创建消息（prompt 已在接口层校验为必填）
+            已有线程 + 传了 prompt：创建消息（用户想一边加消息一边启动 agent）
+            已有线程 + 没传 prompt：跳过（用户已通过 /threads/{id}/messages/add 单独加过消息）
+
+        这样可避免“先加消息再启动”的两步流程出现重复或空消息：
+        1. /threads/{id}/messages/add（带上消息）
+        2. /agent/start（不再带 prompt，仅启动 agent）
+        """
+        # 如果没内容，则跳过
+        if not final_message_content or not final_message_content.strip():
+            return
+
+        # 创建初始用户消息
+        message_id = str(uuid.uuid4())
+        message_payload = {"role": "user", "content": final_message_content}
+        current_time = datetime.now()
+        message = Message(
+            **{
+                "message_id": message_id,
+                "thread_id": thread_id,
+                "type": "user",
+                "is_llm_message": True,
+                "content": message_payload,
+                "created_at": current_time,
+                "updated_at": current_time,
+            }
+        )
+        Messages.save(message)
+        logger.debug(f"已为线程 {thread_id} 创建用户消息")
+
+    async def create_agent_run():
+        return await _create_agent_run_record(thread_id, effective_model, account_id, metadata)
+
+    _, agent_run_id = await asyncio.gather(create_message(), create_agent_run())
+
+    # 触发后台执行
+    await _trigger_agent_background(agent_run_id, thread_id, project_id, effective_model, agent_id, account_id)
+
+    return {"thread_id": thread_id, "agent_run_id": agent_run_id, "project_id": project_id, "status": "running"}
 
 
 @router.post(
@@ -160,14 +335,16 @@ async def unified_agent_start(
     )
 
     # 额外的验证日志
-    if not thread_id and (not prompt or (isinstance(prompt, str) and not prompt.strip())):
+    if not thread_id and (not prompt or not prompt.strip()):
         error_msg = f"验证错误: 新线程需要提供用户输入。接收到: prompt={prompt!r} (类型={type(prompt)}), thread_id={thread_id!r}"
         logger.error(error_msg)
         raise HTTPException(status_code=400, detail="创建新线程时需要提供用户输入")
 
     try:
+        project_id = None
+        message_content = prompt or ""
+
         if thread_id:
-            logger.debug(f"在已有线程上启动代理: {thread_id}")
             structlog.contextvars.bind_contextvars(thread_id=thread_id)
 
             # 验证线程存在并获取元数据
@@ -186,132 +363,139 @@ async def unified_agent_start(
                 thread_metadata=thread_metadata,
             )
 
-            # 获取有效模型
-            effective_model = await _get_effective_model(model_name, thread_account_id)
+            # # 获取有效模型
+            # effective_model = await _get_effective_model(model_name, account_id)
 
-            if prompt:
-                # 没有文件但提供了用户输入 - 创建用户消息
-                message_id = str(uuid.uuid4())
-                message_payload = {"role": "user", "content": prompt}
-                current_time = datetime.now()
-                message = Message(
-                    **{
-                        "message_id": message_id,
-                        "thread_id": thread_id,
-                        "type": "user",
-                        "is_llm_message": True,
-                        "content": message_payload,
-                        "created_at": current_time,
-                        "updated_at": current_time,
-                    }
-                )
-                Messages.save(message)
-                logger.debug(f"为线程 {thread_id} 创建用户消息")
+            # if prompt:
+            #     # 没有文件但提供了用户输入 - 创建用户消息
+            #     message_id = str(uuid.uuid4())
+            #     message_payload = {"role": "user", "content": prompt}
+            #     current_time = datetime.now()
+            #     message = Message(
+            #         **{
+            #             "message_id": message_id,
+            #             "thread_id": thread_id,
+            #             "type": "user",
+            #             "is_llm_message": True,
+            #             "content": message_payload,
+            #             "created_at": current_time,
+            #             "updated_at": current_time,
+            #         }
+            #     )
+            #     Messages.save(message)
+            #     logger.debug(f"为线程 {thread_id} 创建用户消息")
 
-            # 创建代理运行记录
-            agent_run_id = await _create_agent_run_record(thread_id, effective_model)
+            # # 创建代理运行记录
+            # agent_run_id = await _create_agent_run_record(thread_id, effective_model, account_id)
 
-            # 触发后台执行
-            await _trigger_agent_background(agent_run_id, thread_id, project_id, effective_model, agent_config={})
+            # # 触发后台执行
+            # await _trigger_agent_background(agent_run_id, thread_id, project_id, effective_model)
 
-            return {
-                "thread_id": thread_id,
-                "agent_run_id": agent_run_id,
-                "status": "running",
-            }
+            # return {
+            #     "thread_id": thread_id,
+            #     "agent_run_id": agent_run_id,
+            #     "status": "running",
+            # }
 
         else:
-            # 验证新线程是否提供了用户输入
-            if not prompt or (isinstance(prompt, str) and not prompt.strip()):
-                logger.error(f"验证失败: 新线程需要提供用户输入。接收到 prompt={prompt!r}, 类型={type(prompt)}")
-                raise HTTPException(
-                    status_code=400,
-                    detail="创建新线程时需要提供用户输入",
-                )
+            # # 验证新线程是否提供了用户输入
+            # if not prompt or (isinstance(prompt, str) and not prompt.strip()):
+            #     logger.error(f"验证失败: 新线程需要提供用户输入。接收到 prompt={prompt!r}, 类型={type(prompt)}")
+            #     raise HTTPException(
+            #         status_code=400,
+            #         detail="创建新线程时需要提供用户输入",
+            #     )
 
-            logger.debug(f"使用用户输入和 {len(files)} 个文件创建新线程")
+            # logger.debug(f"使用用户输入和 {len(files)} 个文件创建新线程")
 
-            # 获取有效模型
-            effective_model = await _get_effective_model(model_name, account_id)
+            # # 获取有效模型
+            # effective_model = await _get_effective_model(model_name, account_id)
 
-            # 创建项目
-            placeholder_name = f"{prompt[:30]}..." if len(prompt) > 30 else prompt
+            # # 创建项目
+            # placeholder_name = f"{prompt[:30]}..." if len(prompt) > 30 else prompt
 
-            current_time = datetime.now()
-            project = Projects.insert(
-                Project(
-                    **{
-                        "project_id": str(uuid.uuid4()),
-                        "account_id": account_id,
-                        "name": placeholder_name,
-                        "created_at": current_time,
-                        "updated_at": current_time,
-                    }
-                )
-            )
+            # current_time = datetime.now()
+            # project = Projects.insert(
+            #     Project(
+            #         **{
+            #             "project_id": str(uuid.uuid4()),
+            #             "account_id": account_id,
+            #             "name": placeholder_name,
+            #             "created_at": current_time,
+            #             "updated_at": current_time,
+            #         }
+            #     )
+            # )
 
-            project_id = project.project_id
-            logger.info("创建新项目: {}", project_id)
+            # project_id = project.project_id
+            # logger.info("创建新项目: {}", project_id)
 
-            # 创建线程
-            current_time = datetime.now()
-            thread_data = {
-                "thread_id": str(uuid.uuid4()),
-                "project_id": project_id,
-                "account_id": account_id,
-                "created_at": current_time,
-                "updated_at": current_time,
-            }
+            # # 创建线程
+            # current_time = datetime.now()
+            # thread_data = {
+            #     "thread_id": str(uuid.uuid4()),
+            #     "project_id": project_id,
+            #     "account_id": account_id,
+            #     "created_at": current_time,
+            #     "updated_at": current_time,
+            # }
 
-            structlog.contextvars.bind_contextvars(
-                thread_id=thread_data["thread_id"],
-                project_id=project_id,
-                account_id=account_id,
-            )
+            # structlog.contextvars.bind_contextvars(
+            #     thread_id=thread_data["thread_id"],
+            #     project_id=project_id,
+            #     account_id=account_id,
+            # )
 
-            thread = Threads.insert(Thread(**thread_data))
-            thread_id = thread.thread_id
-            logger.debug("创建新线程: {}", thread_id)
+            # thread = Threads.insert(Thread(**thread_data))
+            # thread_id = thread.thread_id
+            # logger.debug("创建新线程: {}", thread_id)
 
-            # 触发后台命名任务
-            asyncio.create_task(generate_and_update_project_name(project_id=project_id, prompt=prompt))
+            # # 触发后台命名任务
+            # asyncio.create_task(generate_and_update_project_name(project_id=project_id, prompt=prompt))
 
-            # 处理文件上传并创建用户消息
-            message_content = prompt
+            # # 处理文件上传并创建用户消息
+            # message_content = prompt
 
-            # 创建初始用户消息
-            message_id = str(uuid.uuid4())
-            message_payload = {"role": "user", "content": message_content}
-            current_time = datetime.now()
-            message = Message(
-                **{
-                    "message_id": message_id,
-                    "thread_id": thread_id,
-                    "type": "user",
-                    "is_llm_message": True,
-                    "content": message_payload,
-                    "created_at": current_time,
-                    "updated_at": current_time,
-                }
-            )
-            Messages.save(message)
+            # # 创建初始用户消息
+            # message_id = str(uuid.uuid4())
+            # message_payload = {"role": "user", "content": message_content}
+            # current_time = datetime.now()
+            # message = Message(
+            #     **{
+            #         "message_id": message_id,
+            #         "thread_id": thread_id,
+            #         "type": "user",
+            #         "is_llm_message": True,
+            #         "content": message_payload,
+            #         "created_at": current_time,
+            #         "updated_at": current_time,
+            #     }
+            # )
+            # Messages.save(message)
 
-            # 创建代理运行记录
-            agent_run_id = await _create_agent_run_record(thread_id, effective_model)
+            # # 创建代理运行记录
+            # agent_run_id = await _create_agent_run_record(thread_id, effective_model, account_id)
 
-            # 触发后台执行
-            await _trigger_agent_background(agent_run_id, thread_id, project_id, effective_model, agent_config={})
+            # # 触发后台执行
+            # await _trigger_agent_background(agent_run_id, thread_id, project_id, effective_model, agent_id, account_id)
+            pass
 
-            return {
-                "thread_id": thread_id,
-                "agent_run_id": agent_run_id,
-                "status": "running",
-            }
+        result = await start_agent_run(
+            account_id=account_id,
+            prompt=prompt or "",
+            agent_id=agent_id,
+            model_name=model_name,
+            thread_id=thread_id,
+            project_id=project_id,
+            message_content=message_content,
+        )
+
+        return {"thread_id": result["thread_id"], "agent_run_id": result["agent_run_id"], "status": "running"}
 
     except HTTPException:
         raise
     except Exception as e:
-        logger.exception("统一代理启动失败")
+        logger.exception("统一 agent 启动失败")
         # 记录实际错误详情用于调试
         error_details = {
             "error": str(e),
@@ -319,7 +503,7 @@ async def unified_agent_start(
             "traceback": traceback.format_exc(),
         }
         logger.error(f"完整错误详情: {error_details}")
-        raise HTTPException(status_code=500, detail=f"代理启动失败: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"智能体启动失败: {str(e)}")
 
 
 @router.post(
@@ -360,7 +544,10 @@ async def get_active_agent_runs(
 
         # 过滤代理运行，仅包含用户有访问权限的
         # 获取thread_ids并检查访问权限
-        thread_ids = [str(run.thread_id) for run in user_threads]
+        thread_ids = [str(run.thread_id) for run in user_threads if run.thread_id and run.thread_id.strip()]
+        if not thread_ids:
+            logger.debug(f"未找到用户 {user_id} 的任何有效 thread_id")
+            return {"active_runs": []}
 
         # 获取属于用户的线程
         threads = Threads.get_by_ids(thread_ids, user_id)
@@ -383,12 +570,12 @@ async def get_active_agent_runs(
             if run.thread_id in accessible_thread_ids
         ]
 
-        logger.debug(f"找到 {len(accessible_runs)} 个用户的活跃代理运行记录: {user_id}")
+        logger.debug(f"为用户 {user_id} 找到 {len(accessible_runs)} 个活跃 agent run")
         return {"active_runs": accessible_runs}
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"获取用户 {user_id} 活跃代理运行记录时出错: {str(e)}\n{traceback.format_exc()}")
+        logger.error(f"获取用户 {user_id} 的活跃 agent run 时出错：{str(e)}\n{traceback.format_exc()}")
         raise HTTPException(status_code=500, detail=f"获取活跃代理运行记录失败: {str(e)}")
 
 
@@ -469,7 +656,7 @@ async def stream_agent_run(agent_run_id: str, token: Optional[str] = None, reque
     control_channel = f"agent_run:{agent_run_id}:control"  # 全局控制通道
 
     async def stream_generator(agent_run_data):
-        logger.debug(f"使用Redis列表 {response_list_key} 和通道 {response_channel} 流式传输 {agent_run_id} 的响应")
+        logger.debug(f"通过 Redis 列表 {response_list_key} 与频道 {response_channel} 为 {agent_run_id} 推送流式响应")
         last_processed_index = -1
         # 单个pubsub用于响应+控制
         listener_task = None
@@ -492,7 +679,7 @@ async def stream_agent_run(agent_run_id: str, token: Optional[str] = None, reque
             current_status = agent_run_data.get("status") if agent_run_data else None
 
             if current_status != "running":
-                logger.debug(f"代理运行 {agent_run_id} 未在运行（状态: {current_status}）。结束流式传输。")
+                logger.debug(f"代理运行 {agent_run_id} 未在运行（状态: {current_status}），结束流式传输。")
                 yield f"data: {json.dumps({'type': 'status', 'status': 'completed'})}\n\n"
                 return
 
@@ -535,7 +722,7 @@ async def stream_agent_run(agent_run_id: str, token: Optional[str] = None, reque
                                     return  # 收到控制信号时停止监听
 
                         except StopAsyncIteration:
-                            logger.warning(f"监听器为 {agent_run_id} 停止。")
+                            logger.warning(f"{agent_run_id} 的监听器已停止。")
                             await message_queue.put(
                                 {
                                     "type": "error",
@@ -544,8 +731,8 @@ async def stream_agent_run(agent_run_id: str, token: Optional[str] = None, reque
                             )
                             return
                         except Exception as e:
-                            logger.error(f"监听器为 {agent_run_id} 出错: {e}")
-                            await message_queue.put({"type": "error", "data": "监听器失败"})
+                            logger.error(f"{agent_run_id} 的监听器出错：{e}")
+                            await message_queue.put({"type": "error", "data": "监听器故障"})
                             return
                         finally:
                             # 如果继续则重新订阅下一条消息
@@ -560,59 +747,53 @@ async def stream_agent_run(agent_run_id: str, token: Optional[str] = None, reque
                     queue_item = await message_queue.get()
 
                     if queue_item["type"] == "new_response":
-                        # 从Redis列表获取新响应，从最后处理的索引之后开始
+                        # 从 Redis 列表中抓取自上次处理位置之后的新响应
                         new_start_index = last_processed_index + 1
                         new_responses_json = await redis.lrange(response_list_key, new_start_index, -1)
 
                         if new_responses_json:
                             new_responses = [json.loads(r) for r in new_responses_json]
                             num_new = len(new_responses)
-                            # logger.debug(f"接收到 {num_new} 个新响应 for {agent_run_id} (索引 {new_start_index} 开始)")
+                            # logger.debug(f"收到 {agent_run_id} 的 {num_new} 条新响应（自索引 {new_start_index} 起）")
                             for response in new_responses:
                                 yield f"data: {json.dumps(response)}\n\n"
-                                # 检查此响应是否表示完成
+                                # 检查该响应是否标识任务结束
                                 if response.get("type") == "status" and response.get("status") in [
                                     "completed",
                                     "failed",
                                     "stopped",
                                 ]:
-                                    logger.debug(f"通过流中的状态消息检测到运行完成: {response.get('status')}")
+                                    logger.debug(f"流式数据中检测到状态变更，任务结束：{response.get('status')}")
                                     terminate_stream = True
-                                    break  # 停止处理更多新响应
+                                    break  # 停止继续处理后续新响应
                             last_processed_index += num_new
                         if terminate_stream:
                             break
 
                     elif queue_item["type"] == "control":
                         control_signal = queue_item["data"]
-                        terminate_stream = True  # 收到任何控制信号时停止流
+                        terminate_stream = True  # 一旦收到任何控制信号，立即停止流式推送
                         yield f"data: {json.dumps({'type': 'status', 'status': control_signal})}\n\n"
                         break
 
                     elif queue_item["type"] == "error":
-                        logger.error(f"监听器为 {agent_run_id} 出错: {queue_item['data']}")
+                        logger.error(f"{agent_run_id} 监听器报错：{queue_item['data']}")
                         terminate_stream = True
                         yield f"data: {json.dumps({'type': 'status', 'status': 'error'})}\n\n"
                         break
 
                 except asyncio.CancelledError:
-                    logger.debug(f"流生成器主循环为 {agent_run_id} 被取消")
+                    logger.debug(f"{agent_run_id} 的流式生成主循环已取消")
                     terminate_stream = True
                     break
                 except Exception as loop_err:
-                    logger.error(
-                        f"流生成器主循环为 {agent_run_id} 出错: {loop_err}",
-                        exc_info=True,
-                    )
+                    logger.exception(f"{agent_run_id} 的流式生成主循环出错")
                     terminate_stream = True
-                    yield f"data: {json.dumps({'type': 'status', 'status': 'error', 'message': f'流失败: {loop_err}'})}\n\n"
+                    yield f"data: {json.dumps({'type': 'status', 'status': 'error', 'message': f'流式推送失败: {loop_err}'})}\n\n"
                     break
 
         except Exception as e:
-            logger.error(
-                f"为代理运行 {agent_run_id} 设置流时出错: {e}",
-                exc_info=True,
-            )
+            logger.exception(f"为 agent run {agent_run_id} 初始化流式推送失败")
             # 仅在初始发送未发生时发送错误
             if not initial_yield_complete:
                 yield f"data: {json.dumps({'type': 'status', 'status': 'error', 'message': f'启动流失败: {e}'})}\n\n"

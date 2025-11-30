@@ -36,6 +36,7 @@ dramatiq.set_broker(redis_broker)
 
 _initialized = False
 instance_id = ""
+REDIS_RESPONSE_LIST_TTL = 3600  # 1 小时
 
 
 def check_terminating_tool_call(response: dict[str, Any]) -> Optional[str]:
@@ -214,7 +215,7 @@ async def process_agent_responses(
     async for response in agent_gen:
         if not first_response_logged:
             first_token_time = (time.time() - worker_start) * 1000
-            logger.info(f"⏱️ [TIMING] 🎯 从任务开始到收到第一个响应：{first_token_time:.1f}ms")
+            logger.info(f"[TIMING] 从任务开始到收到第一个响应：{first_token_time:.1f}ms")
             first_response_logged = True
 
         if stop_signal_checker_state.get("stop_signal_received"):
@@ -299,7 +300,8 @@ async def run_agent_background(
     instance_id: str,
     project_id: str,
     model_name: str = "glm-4.6",
-    agent_config: Optional[dict] = None,
+    agent_id: Optional[str] = None,
+    account_id: Optional[str] = None,
     request_id: Optional[str] = None,
 ):
     worker_start = time.time()
@@ -312,7 +314,7 @@ async def run_agent_background(
         request_id=request_id,
     )
 
-    logger.info("⏱️ [TIMING] Worker 于 {} 收到任务", worker_start)
+    logger.info("[TIMING] Worker 于 {} 收到任务", worker_start)
 
     t = time.time()
     try:
@@ -401,12 +403,12 @@ async def run_agent_background(
             thread_id=thread_id,
             model_name=model_name,
             project_id=project_id,
-            agent_config=agent_config,
             cancellation_event=cancellation_event,
+            account_id=account_id,
         )
 
         total_to_ready = (time.time() - worker_start) * 1000
-        logger.info(f"⏱️ [TIMING] 从任务开始到第一次 LLM 调用准备就绪：{total_to_ready:.1f}ms")
+        logger.info(f"[TIMING] 从任务开始到第一次 LLM 调用准备就绪：{total_to_ready:.1f}ms")
 
         (
             final_status,
@@ -420,7 +422,9 @@ async def run_agent_background(
         if final_status == "running":
             final_status = "completed"
             await handle_normal_completion(agent_run_id, start_time, total_responses, redis_keys)
-            await send_completion_notification(thread_id, agent_config, complete_tool_called)
+            await send_completion_notification(
+                thread_id=thread_id, agent_config={}, complete_tool_called=complete_tool_called
+            )
             if not complete_tool_called:
                 logger.info("agent run {} 未调用 complete 工具即结束，跳过通知。", agent_run_id)
 
@@ -519,10 +523,6 @@ async def _cleanup_redis_run_lock(agent_run_id: str):
         # logger.debug(f"成功清理 Redis 运行锁键: {run_lock_key}")
     except Exception as e:
         logger.warning(f"清理 Redis 运行锁键失败 {run_lock_key}: {str(e)}")
-
-
-# Redis 响应列表的 TTL（24 小时）
-REDIS_RESPONSE_LIST_TTL = 3600 * 24
 
 
 async def _cleanup_redis_response_list(agent_run_id: str):
