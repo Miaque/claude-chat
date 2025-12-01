@@ -3,35 +3,35 @@ import json
 from abc import ABC
 from dataclasses import dataclass
 from enum import Enum
-from typing import Any, Dict, List, Optional, Union
+from typing import Any, Optional, Union
 
 
 class SchemaType(Enum):
-    """Enumeration of supported schema types for tool definitions."""
+    """工具定义支持的模式类型"""
 
     OPENAPI = "openapi"
 
 
 @dataclass
 class ToolSchema:
-    """Container for tool schemas with type information.
+    """工具模式，包含类型信息
 
-    Attributes:
-        schema_type (SchemaType): Type of schema (OpenAPI)
-        schema (Dict[str, Any]): The actual schema definition
+    属性:
+        schema_type (SchemaType): 模式类型 (OpenAPI)
+        schema (dict[str, Any]): 模式定义
     """
 
     schema_type: SchemaType
-    schema: Dict[str, Any]
+    schema: dict[str, Any]
 
 
 @dataclass
 class ToolResult:
-    """Container for tool execution results.
+    """工具执行结果
 
-    Attributes:
-        success (bool): Whether the tool execution succeeded
-        output (str): Output message or error description
+    属性:
+        success (bool): 工具执行是否成功
+        output (str): 输出消息或错误描述
     """
 
     success: bool
@@ -40,16 +40,16 @@ class ToolResult:
 
 @dataclass
 class ToolMetadata:
-    """Container for tool-level metadata.
+    """工具级别元数据
 
-    Attributes:
-        display_name (str): Human-readable tool name
-        description (str): Tool description
-        icon (Optional[str]): Icon identifier for UI
-        color (Optional[str]): Color class for UI styling
-        is_core (bool): Whether this is a core tool (always enabled)
-        weight (int): Sort order (lower = higher priority, default 100)
-        visible (bool): Whether tool is visible in frontend UI (default False)
+    属性:
+        display_name (str): 工具名称
+        description (str): 工具描述
+        icon (Optional[str]): 图标标识
+        color (Optional[str]): 颜色
+        is_core (bool): 是否为核心工具 (默认False)
+        weight (int): 排序顺序 (默认100)
+        visible (bool): 是否在前端UI中可见 (默认False)
     """
 
     display_name: str
@@ -63,13 +63,13 @@ class ToolMetadata:
 
 @dataclass
 class MethodMetadata:
-    """Container for method-level metadata.
+    """方法级别元数据
 
-    Attributes:
-        display_name (str): Human-readable method name
-        description (str): Method description
-        is_core (bool): Whether this is a core method (always enabled)
-        visible (bool): Whether method is visible in frontend UI (default True)
+    属性:
+        display_name (str): 方法名称
+        description (str): 方法描述
+        is_core (bool): 是否为核心方法 (默认False)
+        visible (bool): 是否在前端UI中可见 (默认True)
     """
 
     display_name: str
@@ -79,35 +79,35 @@ class MethodMetadata:
 
 
 class Tool(ABC):
-    """Abstract base class for all tools.
+    """抽象基类，所有工具的基类
 
-    Provides the foundation for implementing tools with schema registration
-    and result handling capabilities.
+    提供了实现工具的基类，包括模式注册和结果处理能力。
 
-    Attributes:
-        _schemas (Dict[str, List[ToolSchema]]): Registered schemas for tool methods
-        _metadata (Optional[ToolMetadata]): Tool-level metadata
-        _method_metadata (Dict[str, MethodMetadata]): Method-level metadata
+    属性:
+        _schemas (dict[str, list[ToolSchema]]): 注册的工具方法的模式
+        _metadata (ToolMetadata | None): 工具级别元数据
+        _method_metadata (dict[str, MethodMetadata]): 方法级别元数据
 
-    Methods:
-        get_schemas: Get all registered tool schemas
-        get_metadata: Get tool metadata
-        get_method_metadata: Get metadata for all methods
-        success_response: Create a successful result
-        fail_response: Create a failed result
+    方法:
+        get_schemas: 获取所有注册的工具模式
+        get_metadata: 获取工具元数据
+        get_method_metadata: 获取所有方法的元数据
+        success_response: 返回执行成功的结果
+        fail_response: 返回执行失败的结果
+
     """
 
     def __init__(self):
         """Initialize tool with empty schema registry."""
-        self._schemas: Dict[str, List[ToolSchema]] = {}
-        self._metadata: Optional[ToolMetadata] = None
-        self._method_metadata: Dict[str, MethodMetadata] = {}
+        self._schemas: dict[str, list[ToolSchema]] = {}
+        self._metadata: ToolMetadata | None = None
+        self._method_metadata: dict[str, MethodMetadata] = {}
         # logger.debug(f"Initializing tool class: {self.__class__.__name__}")
         self._register_metadata()
         self._register_schemas()
 
     def _register_metadata(self):
-        """Register metadata from class and method decorators."""
+        """注册类和方法的元数据"""
         # Register tool-level metadata
         if hasattr(self.__class__, "__tool_metadata__"):
             self._metadata = self.__class__.__tool_metadata__
@@ -118,44 +118,44 @@ class Tool(ABC):
                 self._method_metadata[name] = method.__method_metadata__
 
     def _register_schemas(self):
-        """Register schemas from all decorated methods."""
+        """注册所有装饰器方法的模式"""
         for name, method in inspect.getmembers(self, predicate=inspect.ismethod):
             if hasattr(method, "tool_schemas"):
                 self._schemas[name] = method.tool_schemas
                 # logger.debug(f"Registered schemas for method '{name}' in {self.__class__.__name__}")
 
-    def get_schemas(self) -> Dict[str, List[ToolSchema]]:
-        """Get all registered tool schemas.
+    def get_schemas(self) -> dict[str, list[ToolSchema]]:
+        """获取所有注册的工具模式。
 
-        Returns:
-            Dict mapping method names to their schema definitions
+        返回:
+            dict[str, list[ToolSchema]]: 方法名称到模式定义的映射
         """
         return self._schemas
 
     def get_metadata(self) -> Optional[ToolMetadata]:
-        """Get tool-level metadata.
+        """获取工具级别元数据。
 
-        Returns:
-            ToolMetadata object or None if not set
+        返回:
+            ToolMetadata | None: 工具级别元数据或None
         """
         return self._metadata
 
-    def get_method_metadata(self) -> Dict[str, MethodMetadata]:
-        """Get metadata for all methods.
+    def get_method_metadata(self) -> dict[str, MethodMetadata]:
+        """获取所有方法的元数据。
 
-        Returns:
-            Dict mapping method names to their metadata
+        返回:
+            dict[str, MethodMetadata]: 方法名称到元数据的映射
         """
         return self._method_metadata
 
-    def success_response(self, data: Union[Dict[str, Any], str]) -> ToolResult:
-        """Create a successful tool result.
+    def success_response(self, data: Union[dict[str, Any], str]) -> ToolResult:
+        """返回一个成功的工具执行结果。
 
-        Args:
-            data: Result data (dictionary or string)
+        参数:
+            data: 结果数据 (字典或字符串)
 
-        Returns:
-            ToolResult with success=True and formatted output
+        返回:
+            ToolResult: 包含成功标志和格式化输出的结果
         """
         if isinstance(data, str):
             text = data
@@ -165,20 +165,20 @@ class Tool(ABC):
         return ToolResult(success=True, output=text)
 
     def fail_response(self, msg: str) -> ToolResult:
-        """Create a failed tool result.
+        """返回一个失败的工具执行结果。
 
-        Args:
-            msg: Error message describing the failure
+        参数:
+            msg: 错误消息描述失败
 
-        Returns:
-            ToolResult with success=False and error message
+        返回:
+            ToolResult: 包含失败标志和错误消息的结果
         """
         # logger.debug(f"Tool {self.__class__.__name__} returned failed result: {msg}")
         return ToolResult(success=False, output=msg)
 
 
 def _add_schema(func, schema: ToolSchema):
-    """Helper to add schema to a function."""
+    """添加模式到函数。"""
     if not hasattr(func, "tool_schemas"):
         func.tool_schemas = []
     func.tool_schemas.append(schema)
@@ -186,14 +186,12 @@ def _add_schema(func, schema: ToolSchema):
     return func
 
 
-def openapi_schema(schema: Dict[str, Any]):
-    """Decorator for OpenAPI schema tools."""
+def openapi_schema(schema: dict[str, Any]):
+    """OpenAPI模式工具的装饰器。"""
 
     def decorator(func):
         # logger.debug(f"Applying OpenAPI schema to function {func.__name__}")
-        return _add_schema(
-            func, ToolSchema(schema_type=SchemaType.OPENAPI, schema=schema)
-        )
+        return _add_schema(func, ToolSchema(schema_type=SchemaType.OPENAPI, schema=schema))
 
     return decorator
 
@@ -207,23 +205,21 @@ def tool_metadata(
     weight: int = 100,
     visible: bool = False,
 ):
-    """Decorator to add metadata to a Tool class.
+    """添加元数据到工具类的装饰器。
 
-    Args:
-        display_name: Human-readable tool name
-        description: Tool description
-        icon: Icon identifier for UI (optional)
-        color: Color class for UI styling (optional)
-        is_core: Whether this is a core tool that's always enabled
-        weight: Sort order (lower = higher priority, default 100)
-                Examples: Core tools=10, File ops=20, Advanced=90
-        visible: Whether tool is visible in frontend UI (default True)
-                 Set to False to hide from UI (internal/experimental tools)
+    参数:
+        display_name: 可读的工具名称
+        description: 工具描述
+        icon: 图标 (可选)
+        color: 颜色 (可选)
+        is_core: 是否为核心工具 (默认False)
+        weight: 排序顺序 (默认100)
+        visible: 是否在前端UI中可见 (默认False)
 
-    Usage:
+    示例:
         @tool_metadata(
-            display_name="File Operations",
-            description="Create, read, edit, and manage files",
+            display_name="文件操作",
+            description="创建、读取、编辑和管理文件",
             icon="FolderOpen",
             color="bg-blue-100 dark:bg-blue-800/50",
             weight=20,
@@ -234,8 +230,8 @@ def tool_metadata(
 
         # Example: Hidden from UI (internal tool)
         @tool_metadata(
-            display_name="Internal Feature",
-            description="Internal functionality not shown in UI",
+            display_name="内部功能",
+            description="内部功能不显示在前端UI中",
             visible=False
         )
         class InternalTool(Tool):
@@ -257,22 +253,19 @@ def tool_metadata(
     return decorator
 
 
-def method_metadata(
-    display_name: str, description: str, is_core: bool = False, visible: bool = True
-):
-    """Decorator to add metadata to a tool method.
+def method_metadata(display_name: str, description: str, is_core: bool = False, visible: bool = True):
+    """添加元数据到工具方法的装饰器。
 
-    Args:
-        display_name: Human-readable method name
-        description: Method description
-        is_core: Whether this is a core method that's always enabled
-        visible: Whether method is visible in frontend UI (default True)
-                 Set to False to hide from UI (internal/experimental methods)
+    参数:
+        display_name: 方法名称
+        description: 方法描述
+        is_core: 是否为核心方法 (默认False)
+        visible: 是否在前端UI中可见 (默认True)
 
-    Usage:
+    示例:
         @method_metadata(
-            display_name="Create File",
-            description="Create new files with content",
+            display_name="创建文件",
+            description="创建新的文件",
             visible=True
         )
         @openapi_schema({...})
@@ -281,8 +274,8 @@ def method_metadata(
 
         # Example: Hidden from UI (internal method)
         @method_metadata(
-            display_name="Internal Helper",
-            description="Internal functionality not shown in UI",
+            display_name="内部助手",
+            description="内部功能不显示在前端UI中",
             visible=False
         )
         @openapi_schema({...})

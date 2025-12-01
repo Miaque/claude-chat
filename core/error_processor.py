@@ -1,5 +1,5 @@
 from dataclasses import dataclass
-from typing import Any, Dict, Optional
+from typing import Any, Optional
 
 from claude_agent_sdk import (
     ClaudeSDKError,
@@ -18,9 +18,9 @@ class ProcessedError:
     error_type: str
     message: str
     original_error: Optional[Exception] = None
-    context: Optional[Dict[str, Any]] = None
+    context: Optional[dict[str, Any]] = None
 
-    def to_stream_dict(self) -> Dict[str, Any]:
+    def to_stream_dict(self) -> dict[str, Any]:
         """转换为流兼容的错误字典。"""
         return {
             "type": "status",
@@ -34,9 +34,7 @@ class ErrorProcessor:
     """使用 LiteLLM 的异常类型处理 LLM 相关错误。"""
 
     @staticmethod
-    def process_llm_error(
-        error: Exception, context: Optional[Dict[str, Any]] = None
-    ) -> ProcessedError:
+    def process_llm_error(error: Exception, context: Optional[dict[str, Any]] = None) -> ProcessedError:
         """Process LLM-related errors using LiteLLM's exception types."""
         error_message = ErrorProcessor.safe_error_to_string(error)
 
@@ -91,7 +89,7 @@ class ErrorProcessor:
 
     @staticmethod
     def process_tool_error(
-        error: Exception, tool_name: str, context: Optional[Dict[str, Any]] = None
+        error: Exception, tool_name: str, context: Optional[dict[str, Any]] = None
     ) -> ProcessedError:
         """处理工具执行错误。"""
         return ProcessedError(
@@ -102,9 +100,7 @@ class ErrorProcessor:
         )
 
     @staticmethod
-    def process_system_error(
-        error: Exception, context: Optional[Dict[str, Any]] = None
-    ) -> ProcessedError:
+    def process_system_error(error: Exception, context: Optional[dict[str, Any]] = None) -> ProcessedError:
         """处理通用系统错误。"""
         return ProcessedError(
             error_type="system_error",
@@ -139,9 +135,7 @@ class ErrorProcessor:
         """使用适当的级别记录已处理的错误。"""
         log_func = getattr(logger, level, logger.error)
 
-        log_message = (
-            f"[{processed_error.error_type.upper()}] {processed_error.message}"
-        )
+        log_message = f"[{processed_error.error_type.upper()}] {processed_error.message}"
 
         # 永远不要将 exc_info 传递给 structlog - 它会导致复杂异常的连接错误
         # 相反，安全地记录错误详情

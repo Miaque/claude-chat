@@ -1,8 +1,9 @@
 import asyncio
 import datetime
 import json
+from collections.abc import AsyncGenerator
 from dataclasses import dataclass
-from typing import Any, AsyncGenerator, Optional
+from typing import Any, Optional
 
 from loguru import logger
 
@@ -47,9 +48,7 @@ class PromptManager:
         datetime_info += f"当前年份: {now.strftime('%Y')}\n"
         datetime_info += f"当前月份: {now.strftime('%B')}\n"
         datetime_info += f"当前日期: {now.strftime('%A')}\n"
-        datetime_info += (
-            "将此信息用于任何时间敏感的任务、研究，或需要当前日期/时间上下文时。\n"
-        )
+        datetime_info += "将此信息用于任何时间敏感的任务、研究，或需要当前日期/时间上下文时。\n"
 
         system_content += datetime_info
 
@@ -64,9 +63,7 @@ class PromptManager:
                 locale = await get_user_locale(user_id)
                 locale_prompt = get_locale_context_prompt(locale)
                 system_content += f"\n\n{locale_prompt}\n"
-                logger.debug(
-                    f"为用户 {user_id} 添加了地区上下文 ({locale}) 到系统提示中"
-                )
+                logger.debug(f"为用户 {user_id} 添加了地区上下文 ({locale}) 到系统提示中")
             except Exception as e:
                 logger.warning(f"向系统提示添加地区上下文失败: {e}")
 
@@ -96,13 +93,9 @@ class AgentRunner:
 
         sandbox_info = project_data.sandbox
         if not sandbox_info.get("id"):
-            logger.debug(
-                f"未找到项目 {self.config.project_id} 的sandbox；将在需要时延迟创建"
-            )
+            logger.debug(f"未找到项目 {self.config.project_id} 的sandbox；将在需要时延迟创建")
 
-    async def run(
-        self, cancellation_event: asyncio.Event | None
-    ) -> AsyncGenerator[dict[str, Any], None]:
+    async def run(self, cancellation_event: asyncio.Event | None) -> AsyncGenerator[dict[str, Any], None]:
         await self.setup()
 
         system_message = await PromptManager.build_system_prompt(
@@ -112,9 +105,7 @@ class AgentRunner:
             # tool_registry=self.thread_manager.tool_registry,
             user_id=self.account_id,
         )
-        logger.info(
-            f"📝 系统消息构建完成: {len(str(system_message.get('content', '')))} 字符"
-        )
+        logger.info(f"系统消息构建完成: {len(str(system_message.get('content', '')))} 字符")
         logger.debug(f"收到 model_name: {self.config.model_name}")
 
         latest_user_message = Messages.get_latest_user_message(self.config.thread_id)
@@ -125,9 +116,7 @@ class AgentRunner:
             if isinstance(data, str):
                 data = json.loads(data)
             # 提取内容用于快速路径优化
-            latest_user_message_content = (
-                data.get("content") if isinstance(data, dict) else str(data)
-            )
+            latest_user_message_content = data.get("content") if isinstance(data, dict) else str(data)
 
         temporary_message = None
         try:
@@ -150,14 +139,8 @@ class AgentRunner:
                 if hasattr(response, "__aiter__") and not isinstance(response, dict):
                     async for chunk in response:
                         # 检查来自thread_manager的错误状态
-                        if (
-                            isinstance(chunk, dict)
-                            and chunk.get("type") == "status"
-                            and chunk.get("status") == "error"
-                        ):
-                            logger.error(
-                                f"线程执行出错: {chunk.get('message', '未知错误')}"
-                            )
+                        if isinstance(chunk, dict) and chunk.get("type") == "status" and chunk.get("status") == "error":
+                            logger.error(f"线程执行出错: {chunk.get('message', '未知错误')}")
                             yield chunk
                             continue
 
@@ -187,26 +170,20 @@ class AgentRunner:
                         and response.get("type") == "status"
                         and response.get("status") == "error"
                     ):
-                        logger.error(
-                            f"线程返回错误: {response.get('message', '未知错误')}"
-                        )
+                        logger.error(f"线程返回错误: {response.get('message', '未知错误')}")
                         yield response
                     else:
                         logger.warning(f"意外的响应类型: {type(response)}")
 
             except Exception as e:
                 # 使用ErrorProcessor进行安全错误处理
-                processed_error = ErrorProcessor.process_system_error(
-                    e, context={"thread_id": self.config.thread_id}
-                )
+                processed_error = ErrorProcessor.process_system_error(e, context={"thread_id": self.config.thread_id})
                 ErrorProcessor.log_error(processed_error)
                 yield processed_error.to_stream_dict()
 
         except Exception as e:
             # 使用ErrorProcessor进行安全错误转换
-            processed_error = ErrorProcessor.process_system_error(
-                e, context={"thread_id": self.config.thread_id}
-            )
+            processed_error = ErrorProcessor.process_system_error(e, context={"thread_id": self.config.thread_id})
             ErrorProcessor.log_error(processed_error)
             yield processed_error.to_stream_dict()
 
@@ -218,14 +195,14 @@ async def run_agent(
     model_name: str = "glm-4.6",
     agent_config: Optional[dict] = None,
     cancellation_event: Optional[asyncio.Event] = None,
-    account_id: Optional[str] = None
+    account_id: Optional[str] = None,
 ):
     config = AgentConfig(
         thread_id=thread_id,
         project_id=project_id,
         model_name=model_name,
         agent_config=agent_config,
-        account_id=account_id
+        account_id=account_id,
     )
 
     runner = AgentRunner(config)

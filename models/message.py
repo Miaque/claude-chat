@@ -15,9 +15,7 @@ from models.types import StringUUID
 class Message(Base):
     __tablename__ = "messages"
 
-    message_id: Mapped[str] = mapped_column(
-        StringUUID, primary_key=True, index=True, default=lambda: str(uuid4())
-    )
+    message_id: Mapped[str] = mapped_column(StringUUID, primary_key=True, index=True, default=lambda: str(uuid4()))
     thread_id: Mapped[str] = mapped_column(StringUUID, nullable=False, index=True)
     type: Mapped[str] = mapped_column(TEXT, nullable=False)
     is_llm_message: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
@@ -26,9 +24,7 @@ class Message(Base):
     created_at: Mapped[datetime] = mapped_column(
         DateTime, nullable=False, server_default=func.current_timestamp(), index=True
     )
-    updated_at: Mapped[datetime] = mapped_column(
-        DateTime, nullable=False, server_default=func.current_timestamp()
-    )
+    updated_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, server_default=func.current_timestamp())
     agent_id: Mapped[Optional[str]] = mapped_column(StringUUID, index=True)
     agent_version_id: Mapped[Optional[str]] = mapped_column(StringUUID, index=True)
 

@@ -15,22 +15,16 @@ from models.types import StringUUID
 class Thread(Base):
     __tablename__ = "threads"
 
-    thread_id: Mapped[str] = mapped_column(
-        StringUUID, primary_key=True, index=True, default=lambda: str(uuid4())
-    )
+    thread_id: Mapped[str] = mapped_column(StringUUID, primary_key=True, index=True, default=lambda: str(uuid4()))
     account_id: Mapped[str] = mapped_column(StringUUID, index=True)
     project_id: Mapped[str] = mapped_column(StringUUID, index=True)
     is_public: Mapped[bool] = mapped_column(Boolean, default=False)
     created_at: Mapped[datetime] = mapped_column(
         DateTime, nullable=False, server_default=func.current_timestamp(), index=True
     )
-    updated_at: Mapped[datetime] = mapped_column(
-        DateTime, nullable=False, server_default=func.current_timestamp()
-    )
+    updated_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, server_default=func.current_timestamp())
     meta: Mapped[dict] = mapped_column(JSONB, nullable=True, default={})
-    session_id: Mapped[Optional[str]] = mapped_column(
-        StringUUID, nullable=True, index=True
-    )
+    session_id: Mapped[Optional[str]] = mapped_column(StringUUID, nullable=True, index=True)
 
 
 class ThreadModel(BaseModel):
@@ -70,16 +64,12 @@ class ThreadTable:
                 # 如果指定了 fields，只查询指定字段
                 if fields:
                     # 执行字段级查询
-                    result = (
-                        db.query(*fields).filter(Thread.thread_id == thread_id).first()
-                    )
+                    result = db.query(*fields).filter(Thread.thread_id == thread_id).first()
                     return result or None
 
                 # 没有指定 fields，查询完整对象
                 else:
-                    thread = (
-                        db.query(Thread).filter(Thread.thread_id == thread_id).first()
-                    )
+                    thread = db.query(Thread).filter(Thread.thread_id == thread_id).first()
                     return ThreadModel.model_validate(thread) if thread else None
 
         except Exception:
@@ -96,15 +86,9 @@ class ThreadTable:
                     .filter(Thread.account_id == account_id)
                     .all()
                 )
-                return (
-                    [ThreadModel.model_validate(thread) for thread in threads]
-                    if threads
-                    else None
-                )
+                return [ThreadModel.model_validate(thread) for thread in threads] if threads else None
         except Exception:
-            logger.exception(
-                f"根据ids => [{thread_ids}]和account_id => [{account_id}]查询线程失败"
-            )
+            logger.exception(f"根据ids => [{thread_ids}]和account_id => [{account_id}]查询线程失败")
             raise
 
     @staticmethod

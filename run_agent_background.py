@@ -327,11 +327,11 @@ async def run_agent_background(
 
     timings["lock_acquisition"] = (time.time() - worker_start) * 1000 - timings["initialize"]
     logger.info(
-        f"⏱️ [TIMING] Worker 初始化: {timings['initialize']:.1f}ms | 获取锁: {timings['lock_acquisition']:.1f}ms"
+        f"[TIMING] Worker 初始化: {timings['initialize']:.1f}ms | 获取锁: {timings['lock_acquisition']:.1f}ms"
     )
     logger.info(f"后台启动 agent run：{agent_run_id}，线程：{thread_id}，实例：{instance_id}")
 
-    logger.info("🚀 使用模型: {}", model_name)
+    logger.info("使用模型: {}", model_name)
 
     start_time = datetime.now()
     pubsub = None

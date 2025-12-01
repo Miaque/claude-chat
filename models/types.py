@@ -14,9 +14,7 @@ class StringUUID(TypeDecorator[uuid.UUID | str | None]):
     impl = CHAR
     cache_ok = True
 
-    def process_bind_param(
-        self, value: uuid.UUID | str | None, dialect: Dialect
-    ) -> str | None:
+    def process_bind_param(self, value: uuid.UUID | str | None, dialect: Dialect) -> str | None:
         if value is None:
             return value
         elif dialect.name == "postgresql":
@@ -32,9 +30,7 @@ class StringUUID(TypeDecorator[uuid.UUID | str | None]):
         else:
             return dialect.type_descriptor(CHAR(36))
 
-    def process_result_value(
-        self, value: uuid.UUID | str | None, dialect: Dialect
-    ) -> str | None:
+    def process_result_value(self, value: uuid.UUID | str | None, dialect: Dialect) -> str | None:
         if value is None:
             return value
         return str(value)
@@ -80,9 +76,7 @@ class BinaryData(TypeDecorator[bytes | None]):
         else:
             return dialect.type_descriptor(LargeBinary())
 
-    def process_result_value(
-        self, value: bytes | None, dialect: Dialect
-    ) -> bytes | None:
+    def process_result_value(self, value: bytes | None, dialect: Dialect) -> bytes | None:
         if value is None:
             return value
         return value
@@ -107,14 +101,10 @@ class AdjustedJSON(TypeDecorator[dict | list | None]):
         else:
             return dialect.type_descriptor(sa.JSON())
 
-    def process_bind_param(
-        self, value: dict | list | None, dialect: Dialect
-    ) -> dict | list | None:
+    def process_bind_param(self, value: dict | list | None, dialect: Dialect) -> dict | list | None:
         return value
 
-    def process_result_value(
-        self, value: dict | list | None, dialect: Dialect
-    ) -> dict | list | None:
+    def process_result_value(self, value: dict | list | None, dialect: Dialect) -> dict | list | None:
         return value
 
 
@@ -139,9 +129,7 @@ class EnumText(TypeDecorator[_E | None], Generic[_E]):
             # leave some rooms for future longer enum values.
             self._length = max(max_enum_value_len, 20)
 
-    def process_bind_param(
-        self, value: _E | str | None, dialect: Dialect
-    ) -> str | None:
+    def process_bind_param(self, value: _E | str | None, dialect: Dialect) -> str | None:
         if value is None:
             return value
         if isinstance(value, self._enum_class):

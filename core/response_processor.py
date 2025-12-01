@@ -197,7 +197,7 @@ class ResponseProcessor:
         生成:
             完整的消息对象，匹配数据库模式，除了内容块。
         """
-        logger.info(f"🚀 开始处理Claude Code流式响应 - thread: {thread_id}")
+        logger.info(f"开始处理Claude Code流式响应 - thread: {thread_id}")
 
         # 初始化取消事件
         if cancellation_event is None:
@@ -351,7 +351,7 @@ class ResponseProcessor:
                         if block_type == "text":
                             # 文本块开始
                             content_blocks[index] = {"type": "text", "text": ""}
-                            logger.debug(f"📄 文本块开始 (index={index})")
+                            logger.debug(f"文本块开始 (index={index})")
 
                         elif block_type == "tool_use":
                             # 工具调用块开始
@@ -443,7 +443,7 @@ class ResponseProcessor:
                         delta = event.get("delta", {})
                         if "stop_reason" in delta:
                             finish_reason = delta["stop_reason"]
-                            logger.debug(f"📌 finish_reason={finish_reason}")
+                            logger.debug(f"finish_reason={finish_reason}")
                         if "usage" in event:
                             usage_data.update(event["usage"])
 

@@ -15,9 +15,7 @@ from models.types import StringUUID
 class Project(Base):
     __tablename__ = "projects"
 
-    project_id: Mapped[str] = mapped_column(
-        StringUUID, primary_key=True, index=True, default=lambda: str(uuid4())
-    )
+    project_id: Mapped[str] = mapped_column(StringUUID, primary_key=True, index=True, default=lambda: str(uuid4()))
     name: Mapped[str] = mapped_column(Text, nullable=False)
     description: Mapped[Optional[str]] = mapped_column(Text)
     account_id: Mapped[str] = mapped_column(StringUUID, nullable=False, index=True)
@@ -26,9 +24,7 @@ class Project(Base):
     created_at: Mapped[datetime] = mapped_column(
         DateTime, nullable=False, server_default=func.current_timestamp(), index=True
     )
-    updated_at: Mapped[datetime] = mapped_column(
-        DateTime, nullable=False, server_default=func.current_timestamp()
-    )
+    updated_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, server_default=func.current_timestamp())
     icon_name: Mapped[Optional[str]] = mapped_column(Text)
 
 
@@ -68,18 +64,10 @@ class ProjectTable:
         try:
             with get_db() as db:
                 if fields:
-                    response = (
-                        db.query(*fields)
-                        .filter(Project.project_id == project_id)
-                        .first()
-                    )
+                    response = db.query(*fields).filter(Project.project_id == project_id).first()
                     return response or None
                 else:
-                    response = (
-                        db.query(Project)
-                        .filter(Project.project_id == project_id)
-                        .first()
-                    )
+                    response = db.query(Project).filter(Project.project_id == project_id).first()
                 return ProjectModel.model_validate(response)
         except Exception:
             logger.exception("根据id查询项目失败")
