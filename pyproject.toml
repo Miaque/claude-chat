@@ -4,7 +4,7 @@ version = "0.1.0"
 description = "Add your description here"
 requires-python = ">=3.11"
 dependencies = [
-    "claude-agent-sdk>=0.1.8",
+    "claude-agent-sdk>=0.1.10",
     "dramatiq[redis]==1.18.0",
     "fastapi>=0.121.2",
     "loguru>=0.7.3",
