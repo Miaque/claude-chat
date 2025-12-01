@@ -40,5 +40,8 @@
     "frontend": true,
     ".history": true
   },
-  "python.languageServer": "None"
+  "python.languageServer": "None",
+  "python.pyrefly.displayTypeErrors": "force-off",
+  "cursorpyright.disableLanguageServices": false,
+  "python.pyrefly.disableLanguageServices": true
 }

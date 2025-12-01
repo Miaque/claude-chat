@@ -180,3 +180,71 @@ async def expire(key: str, seconds: int):
     """为键设置过期时间。"""
     redis_client = await get_client()
     return await redis_client.expire(key, seconds)
+
+
+# Stream 操作
+
+
+async def xadd(
+    stream_key: str,
+    fields: dict[str, Any],
+    maxlen: Optional[int] = None,
+    approximate: bool = True,
+) -> str:
+    """
+    向 Stream 添加消息。
+
+    参数:
+        stream_key: Stream 的键名
+        fields: 消息字段字典
+        maxlen: 可选的最大长度限制
+        approximate: 是否使用近似修剪（默认 True，性能更好）
+
+    返回:
+        消息 ID
+    """
+    redis_client = await get_client()
+    return await redis_client.xadd(stream_key, fields, maxlen=maxlen, approximate=approximate)
+
+
+async def xread(
+    streams: dict[str, str],
+    count: Optional[int] = None,
+    block: Optional[int] = None,
+) -> list | None:
+    """
+    从一个或多个 Stream 读取消息。
+
+    参数:
+        streams: 字典，键为 stream 名称，值为起始消息 ID（使用 "0" 从头读取，"$" 读取新消息）
+        count: 每个 stream 最多返回的消息数量
+        block: 阻塞等待的毫秒数（None 表示不阻塞）
+
+    返回:
+        消息列表，格式为 [[stream_name, [(msg_id, {fields}), ...]], ...]
+        如果没有消息则返回 None
+    """
+    redis_client = await get_client()
+    return await redis_client.xread(streams, count=count, block=block)
+
+
+async def xrange(
+    stream_key: str,
+    start: str = "-",
+    end: str = "+",
+    count: Optional[int] = None,
+) -> list:
+    """
+    获取 Stream 中指定范围的消息。
+
+    参数:
+        stream_key: Stream 的键名
+        start: 起始消息 ID（"-" 表示最早的消息）
+        end: 结束消息 ID（"+" 表示最新的消息）
+        count: 最多返回的消息数量
+
+    返回:
+        消息列表，格式为 [(msg_id, {fields}), ...]
+    """
+    redis_client = await get_client()
+    return await redis_client.xrange(stream_key, start, end, count=count)

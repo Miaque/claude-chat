@@ -1,7 +1,8 @@
 import asyncio
 import json
+from collections.abc import AsyncGenerator
 from datetime import datetime
-from typing import Any, AsyncGenerator, Dict, List, Literal, Optional, Type, Union, cast
+from typing import Any, Literal, Optional, Union, cast
 
 from loguru import logger
 from sqlalchemy import select
@@ -34,8 +35,8 @@ class ThreadManager:
 
     def add_tool(
         self,
-        tool_class: Type[Tool],
-        function_names: Optional[List[str]] = None,
+        tool_class: type[Tool],
+        function_names: Optional[list[str]] = None,
         **kwargs,
     ):
         """向ThreadManager添加工具。"""
@@ -47,7 +48,7 @@ class ThreadManager:
         account_id: Optional[str] = None,
         project_id: Optional[str] = None,
         is_public: bool = False,
-        metadata: Optional[Dict[str, Any]] = None,
+        metadata: Optional[dict[str, Any]] = None,
     ) -> str:
         """在数据库中创建新线程。"""
         # logger.debug(f"创建新线程 (account_id: {account_id}, project_id: {project_id})")
@@ -67,12 +68,11 @@ class ThreadManager:
         self,
         thread_id: str,
         type: str,
-        content: Union[Dict[str, Any], List[Any], str],
+        content: Union[dict[str, Any], list[Any], str],
         is_llm_message: bool = False,
-        metadata: Optional[Dict[str, Any]] = None,
+        metadata: Optional[dict[str, Any]] = None,
         agent_id: Optional[str] = None,
         agent_version_id: Optional[str] = None,
-        session_id: Optional[str] = None,
     ):
         """向线程中添加消息到数据库。"""
         # logger.debug(f"向线程 {thread_id} 添加类型为 '{type}' 的消息")
@@ -92,14 +92,12 @@ class ThreadManager:
             data_to_insert["agent_id"] = agent_id
         if agent_version_id:
             data_to_insert["agent_version_id"] = agent_version_id
-        if session_id:
-            data_to_insert["session_id"] = session_id
 
         message = Message(**data_to_insert)
         saved_message = Messages.insert(message)
         return saved_message.model_dump(mode="json")
 
-    async def get_llm_messages(self, thread_id: str) -> List[Dict[str, Any]]:
+    async def get_llm_messages(self, thread_id: str) -> list[dict[str, Any]]:
         """获取线程的所有消息。"""
         logger.debug(f"获取线程 {thread_id} 的消息")
 
@@ -166,15 +164,15 @@ class ThreadManager:
     async def run_thread(
         self,
         thread_id: str,
-        system_prompt: Dict[str, Any],
+        system_prompt: dict[str, Any],
         stream: bool = True,
-        temporary_message: Optional[Dict[str, Any]] = None,
+        temporary_message: Optional[dict[str, Any]] = None,
         llm_model: str = "glm-4.6",
         processor_config: Optional[ProcessorConfig] = None,
         tool_choice: ToolChoice = "auto",
         latest_user_message_content: Optional[str] = None,
         cancellation_event: Optional[asyncio.Event] = None,
-    ) -> Union[Dict[str, Any], AsyncGenerator]:
+    ) -> Union[dict[str, Any], AsyncGenerator]:
         """运行对话线程，集成LLM和工具执行。"""
         logger.debug(f"🚀 开始执行线程 {thread_id}，使用模型 {llm_model}")
 
@@ -184,9 +182,7 @@ class ThreadManager:
         elif isinstance(processor_config, ProcessorConfig):
             config = processor_config
         else:
-            logger.error(
-                f"无效的processor_config类型: {type(processor_config)}，创建默认值"
-            )
+            logger.error(f"无效的processor_config类型: {type(processor_config)}，创建默认值")
             config = ProcessorConfig()
 
         result = await self._execute_run(
@@ -228,22 +224,20 @@ class ThreadManager:
     async def _execute_run(
         self,
         thread_id: str,
-        system_prompt: Dict[str, Any],
+        system_prompt: dict[str, Any],
         llm_model: str,
         tool_choice: ToolChoice,
         config: ProcessorConfig,
         stream: bool,
-        temporary_message: Optional[Dict[str, Any]] = None,
+        temporary_message: Optional[dict[str, Any]] = None,
         latest_user_message_content: Optional[str] = None,
         cancellation_event: Optional[asyncio.Event] = None,
-    ) -> Union[Dict[str, Any], AsyncGenerator]:
+    ) -> Union[dict[str, Any], AsyncGenerator]:
         """执行单次LLM运行。"""
 
         # 关键: 确保config始终是ProcessorConfig对象
         if not isinstance(config, ProcessorConfig):
-            logger.error(
-                f"错误: config是{type(config)}，期望ProcessorConfig。值: {config}"
-            )
+            logger.error(f"错误: config是{type(config)}，期望ProcessorConfig。值: {config}")
             config = ProcessorConfig()  # 创建新实例作为后备
 
         try:
@@ -295,34 +289,29 @@ class ThreadManager:
                 )
 
         except Exception as e:
-            processed_error = ErrorProcessor.process_system_error(
-                e, context={"thread_id": thread_id}
-            )
+            processed_error = ErrorProcessor.process_system_error(e, context={"thread_id": thread_id})
             ErrorProcessor.log_error(processed_error)
             return processed_error.to_stream_dict()
 
     async def _auto_continue_generator(
         self,
         thread_id: str,
-        system_prompt: Dict[str, Any],
+        system_prompt: dict[str, Any],
         llm_model: str,
         llm_temperature: float,
         llm_max_tokens: Optional[int],
         tool_choice: ToolChoice,
         config: ProcessorConfig,
         stream: bool,
-        auto_continue_state: Dict[str, Any],
-        temporary_message: Optional[Dict[str, Any]],
+        auto_continue_state: dict[str, Any],
+        temporary_message: Optional[dict[str, Any]],
         native_max_auto_continues: int,
         latest_user_message_content: Optional[str] = None,
         cancellation_event: Optional[asyncio.Event] = None,
     ) -> AsyncGenerator:
         """处理自动继续逻辑的生成器。"""
 
-        while (
-            auto_continue_state["active"]
-            and auto_continue_state["count"] < native_max_auto_continues
-        ):
+        while auto_continue_state["active"] and auto_continue_state["count"] < native_max_auto_continues:
             auto_continue_state["active"] = False  # 重置本次迭代
 
             try:
@@ -340,17 +329,12 @@ class ThreadManager:
                     stream,
                     # auto_continue_state,
                     temporary_message if auto_continue_state["count"] == 0 else None,
-                    latest_user_message_content
-                    if auto_continue_state["count"] == 0
-                    else None,
+                    latest_user_message_content if auto_continue_state["count"] == 0 else None,
                     cancellation_event,
                 )
 
                 # 处理错误响应
-                if (
-                    isinstance(response_gen, dict)
-                    and response_gen.get("status") == "error"
-                ):
+                if isinstance(response_gen, dict) and response_gen.get("status") == "error":
                     yield response_gen
                     break
 
@@ -359,9 +343,7 @@ class ThreadManager:
                     async for chunk in cast(AsyncGenerator, response_gen):
                         # 检查取消信号
                         if cancellation_event and cancellation_event.is_set():
-                            logger.info(
-                                f"处理线程 {thread_id} 自动继续流时收到取消信号"
-                            )
+                            logger.info(f"处理线程 {thread_id} 自动继续流时收到取消信号")
                             break
 
                         # 检查自动继续触发器
@@ -388,18 +370,13 @@ class ThreadManager:
                     break
 
             except Exception as e:
-                processed_error = ErrorProcessor.process_system_error(
-                    e, context={"thread_id": thread_id}
-                )
+                processed_error = ErrorProcessor.process_system_error(e, context={"thread_id": thread_id})
                 ErrorProcessor.log_error(processed_error)
                 yield processed_error.to_stream_dict()
                 return
 
         # 处理达到最大迭代次数
-        if (
-            auto_continue_state["active"]
-            and auto_continue_state["count"] >= native_max_auto_continues
-        ):
+        if auto_continue_state["active"] and auto_continue_state["count"] >= native_max_auto_continues:
             logger.warning(f"达到最大自动继续限制 ({native_max_auto_continues})")
             yield {
                 "type": "content",
@@ -408,8 +385,8 @@ class ThreadManager:
 
     def _check_auto_continue_trigger(
         self,
-        chunk: Dict[str, Any],
-        auto_continue_state: Dict[str, Any],
+        chunk: dict[str, Any],
+        auto_continue_state: dict[str, Any],
         native_max_auto_continues: int,
     ) -> bool:
         """检查响应块是否应该触发自动继续。"""
@@ -433,9 +410,7 @@ class ThreadManager:
                         auto_continue_state["count"] += 1
                         return True
                 elif finish_reason == "length":
-                    logger.debug(
-                        f"因长度限制自动继续 ({auto_continue_state['count'] + 1}/{native_max_auto_continues})"
-                    )
+                    logger.debug(f"因长度限制自动继续 ({auto_continue_state['count'] + 1}/{native_max_auto_continues})")
                     auto_continue_state["active"] = True
                     auto_continue_state["count"] += 1
                     return True
@@ -447,6 +422,6 @@ class ThreadManager:
 
         return False
 
-    async def _create_single_error_generator(self, error_dict: Dict[str, Any]):
+    async def _create_single_error_generator(self, error_dict: dict[str, Any]):
         """创建产出单个错误消息的异步生成器。"""
         yield error_dict

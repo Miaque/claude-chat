@@ -1,15 +1,12 @@
 import asyncio
 import json
 import uuid
+from collections.abc import AsyncGenerator, Callable
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 from typing import (
     Any,
-    AsyncGenerator,
-    Callable,
-    Dict,
-    List,
     Literal,
     Optional,
     Union,
@@ -44,7 +41,7 @@ XmlAddingStrategy = Literal["user_message", "assistant_message", "inline_edit"]
 class ToolExecutionContext:
     """工具执行上下文，包含调用详情、结果和显示信息。"""
 
-    tool_call: Dict[str, Any]
+    tool_call: dict[str, Any]
     tool_index: int
     result: Optional[ToolResult] = None
     function_name: Optional[str] = None
@@ -85,9 +82,7 @@ class ResponseProcessor:
 
         self.agent_config = agent_config
 
-    async def _yield_message(
-        self, message_obj: Optional[Dict[str, Any]]
-    ) -> Optional[Dict[str, Any]]:
+    async def _yield_message(self, message_obj: Optional[dict[str, Any]]) -> Optional[dict[str, Any]]:
         """辅助方法：以适当的格式生成消息。
 
         确保内容和元数据为JSON字符串，以保证客户端兼容性。
@@ -96,7 +91,7 @@ class ResponseProcessor:
             return format_for_yield(message_obj)
         return None
 
-    def _serialize_model_response(self, model_response) -> Dict[str, Any]:
+    def _serialize_model_response(self, model_response) -> dict[str, Any]:
         """将ModelResponse对象转换为可JSON序列化的字典。
 
         参数:
@@ -158,9 +153,9 @@ class ResponseProcessor:
         self,
         thread_id: str,
         type: str,
-        content: Union[Dict[str, Any], List[Any], str],
+        content: dict[str, Any] | list[Any] | str,
         is_llm_message: bool = False,
-        metadata: Optional[Dict[str, Any]] = None,
+        metadata: Optional[dict[str, Any]] = None,
     ):
         """辅助方法：在可用时添加包含代理版本信息的消息。"""
         agent_id = None
@@ -184,11 +179,11 @@ class ResponseProcessor:
         self,
         llm_response: AsyncGenerator,
         thread_id: str,
-        prompt_messages: List[Dict[str, Any]],
+        prompt_messages: list[dict[str, Any]],
         llm_model: str,
         config: ProcessorConfig = ProcessorConfig(),
         cancellation_event: Optional[asyncio.Event] = None,
-    ) -> AsyncGenerator[Dict[str, Any], None]:
+    ) -> AsyncGenerator[dict[str, Any], None]:
         """处理流式LLM响应，处理工具调用和执行。
 
         参数:
@@ -228,9 +223,7 @@ class ResponseProcessor:
         thread_run_id = str(uuid.uuid4())
         llm_response_id = str(uuid.uuid4())
 
-        logger.info(
-            f"📝 运行ID: thread_run_id={thread_run_id}, llm_response_id={llm_response_id}"
-        )
+        logger.info(f"运行ID: thread_run_id={thread_run_id}, llm_response_id={llm_response_id}")
 
         try:
             # --- 保存并yield启动事件 ---
@@ -265,7 +258,7 @@ class ResponseProcessor:
             )
             if llm_start_msg_obj:
                 yield format_for_yield(llm_start_msg_obj)
-                logger.info("✅ 已保存llm_response_start")
+                logger.info("已保存llm_response_start")
             # --- 启动事件结束 ---
 
             __sequence = 0  # 消息序列号
@@ -280,11 +273,9 @@ class ResponseProcessor:
                 debug_dir.mkdir(exist_ok=True)
                 timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
                 debug_file = debug_dir / f"stream_{thread_id[:8]}_{timestamp}.txt"
-                debug_file_json = (
-                    debug_dir / f"stream_{thread_id[:8]}_{timestamp}.jsonl"
-                )
+                debug_file_json = debug_dir / f"stream_{thread_id[:8]}_{timestamp}.jsonl"
 
-                logger.info(f"📁 保存原始流输出到: {debug_file}")
+                logger.info(f"保存原始流输出到: {debug_file}")
 
             chunk_count = 0
             tool_index = 0  # 工具调用索引
@@ -293,7 +284,7 @@ class ResponseProcessor:
             async for chunk in llm_response:
                 # 检查取消信号
                 if cancellation_event.is_set():
-                    logger.info(f"⚠️ 收到取消信号，停止处理 - thread: {thread_id}")
+                    logger.info(f"收到取消信号，停止处理 - thread: {thread_id}")
                     finish_reason = "cancelled"
                     break
 
@@ -331,7 +322,7 @@ class ResponseProcessor:
 
                 # --- 1. 处理 SystemMessage（初始化信息） ---
                 if chunk_type == "SystemMessage":
-                    logger.debug("📋 收到系统初始化消息")
+                    logger.debug("收到系统初始化消息")
                     system_message = cast(SystemMessage, chunk)
                     session_id = system_message.data.get("session_id")
                     if session_id:
@@ -349,9 +340,7 @@ class ResponseProcessor:
                         current_message_id = event["message"]["id"]
                         if "usage" in event["message"]:
                             usage_data = event["message"]["usage"]
-                        logger.info(
-                            f"📝 开始第{turn_count}轮消息: {current_message_id}"
-                        )
+                        logger.info(f"开始第{turn_count}轮消息: {current_message_id}")
 
                     # 2.2 content_block_start - 文本块或工具调用块开始
                     elif event_type == "content_block_start":
@@ -374,9 +363,7 @@ class ResponseProcessor:
                                 "name": tool_name,
                                 "input": "",  # 将累积JSON片段
                             }
-                            logger.info(
-                                f"🔧 工具调用开始: {tool_name} (id={tool_call_id})"
-                            )
+                            logger.info(f"工具调用开始: {tool_name} (id={tool_call_id})")
 
                             # yield tool_started 状态消息
                             tool_started_content = {
@@ -407,10 +394,7 @@ class ResponseProcessor:
                             # 文本增量
                             text_chunk = delta["text"]
                             accumulated_content += text_chunk
-                            if (
-                                index in content_blocks
-                                and content_blocks[index]["type"] == "text"
-                            ):
+                            if index in content_blocks and content_blocks[index]["type"] == "text":
                                 content_blocks[index]["text"] += text_chunk
 
                             # yield文本内容
@@ -421,9 +405,7 @@ class ResponseProcessor:
                                 "thread_id": thread_id,
                                 "type": "assistant",
                                 "is_llm_message": True,
-                                "content": to_json_string(
-                                    {"role": "assistant", "content": text_chunk}
-                                ),
+                                "content": to_json_string({"role": "assistant", "content": text_chunk}),
                                 "metadata": to_json_string(
                                     {
                                         "stream_status": "chunk",
@@ -438,10 +420,7 @@ class ResponseProcessor:
                         elif delta_type == "input_json_delta":
                             # 工具参数JSON增量
                             partial_json = delta["partial_json"]
-                            if (
-                                index in content_blocks
-                                and content_blocks[index]["type"] == "tool_use"
-                            ):
+                            if index in content_blocks and content_blocks[index]["type"] == "tool_use":
                                 content_blocks[index]["input"] += partial_json
 
                     # 2.4 content_block_stop - 内容块结束
@@ -454,9 +433,9 @@ class ResponseProcessor:
                             try:
                                 tool_input = json.loads(block["input"])
                                 block["parsed_input"] = tool_input
-                                logger.debug(f"✅ 工具参数解析完成: {block['name']}")
+                                logger.debug(f"工具参数解析完成: {block['name']}")
                             except json.JSONDecodeError as e:
-                                logger.error(f"❌ 工具参数JSON解析失败: {e}")
+                                logger.error(f"工具参数JSON解析失败: {e}")
                                 block["parsed_input"] = {}
 
                     # 2.5 message_delta - 消息增量（usage和stop_reason）
@@ -470,39 +449,31 @@ class ResponseProcessor:
 
                     # 2.6 message_stop - 消息结束
                     elif event_type == "message_stop":
-                        logger.debug(f"✅ 消息流结束 (第{turn_count}轮)")
+                        logger.debug(f"消息流结束 (第{turn_count}轮)")
 
                 # --- 3. 处理 AssistantMessage（完整消息） ---
                 elif chunk_type == "AssistantMessage":
                     # 保存assistant消息到DB
                     content_data = chunk.content
-                    message_content = self._format_assistant_message_content(
-                        content_data
-                    )
+                    message_content = self._format_assistant_message_content(content_data)
 
-                    last_assistant_message_object = (
-                        await self._add_message_with_agent_info(
-                            thread_id=thread_id,
-                            type="assistant",
-                            content=message_content,
-                            is_llm_message=True,
-                            metadata={"thread_run_id": thread_run_id},
-                        )
+                    last_assistant_message_object = await self._add_message_with_agent_info(
+                        thread_id=thread_id,
+                        type="assistant",
+                        content=message_content,
+                        is_llm_message=True,
+                        metadata={"thread_run_id": thread_run_id},
                     )
 
                     if last_assistant_message_object:
                         # yield完整消息
-                        yield_metadata = last_assistant_message_object.get(
-                            "metadata", {}
-                        )
+                        yield_metadata = last_assistant_message_object.get("metadata", {})
                         yield_metadata["stream_status"] = "complete"
                         yield_message = last_assistant_message_object.copy()
                         yield_message["metadata"] = yield_metadata
                         yield format_for_yield(yield_message)
 
-                        logger.info(
-                            f"✅ 已保存assistant消息: {last_assistant_message_object.get('message_id')}"
-                        )
+                        logger.info(f"已保存assistant消息: {last_assistant_message_object.get('message_id')}")
 
                 # --- 4. 处理 UserMessage（工具执行结果） ---
                 elif chunk_type == "UserMessage":
@@ -545,7 +516,7 @@ class ResponseProcessor:
                                 # yield工具结果消息
                                 yield format_for_yield(tool_result_msg)
 
-                            logger.info(f"✅ 已保存工具结果: {block.tool_use_id}")
+                            logger.info(f"已保存工具结果: {block.tool_use_id}")
 
                 # --- 5. 处理 ResultMessage（最终结果） ---
                 elif chunk_type == "ResultMessage":
@@ -554,19 +525,15 @@ class ResponseProcessor:
                     total_cost = getattr(chunk, "total_cost_usd", 0)
                     num_turns = getattr(chunk, "num_turns", turn_count)
 
-                    logger.info(f"🎉 对话完成: {num_turns}轮, 成本=${total_cost:.5f}")
-                    logger.info(f"📊 Token使用: {final_usage}")
+                    logger.info(f"对话完成: {num_turns}轮, 成本=${total_cost:.5f}")
+                    logger.info(f"Token使用: {final_usage}")
 
                     # 保存到final_llm_response以便后续保存llm_response_end
                     final_llm_response = chunk
 
             # --- 流处理结束 ---
-            logger.info(
-                f"✅ 流处理完成. 总chunks: {chunk_count}, finish_reason: {finish_reason}"
-            )
-            logger.info(
-                f"📝 累积内容长度: {len(accumulated_content)} 字符, 对话轮数: {turn_count}"
-            )
+            logger.info(f"流处理完成. 总chunks: {chunk_count}, finish_reason: {finish_reason}")
+            logger.info(f"累积内容长度: {len(accumulated_content)} 字符, 对话轮数: {turn_count}")
 
             # 保存debug摘要（如果启用）
             if app_config.DEBUG:
@@ -578,13 +545,7 @@ class ResponseProcessor:
                         "turn_count": turn_count,
                         "finish_reason": finish_reason,
                         "accumulated_content_length": len(accumulated_content),
-                        "tool_calls_count": len(
-                            [
-                                b
-                                for b in content_blocks.values()
-                                if b.get("type") == "tool_use"
-                            ]
-                        ),
+                        "tool_calls_count": len([b for b in content_blocks.values() if b.get("type") == "tool_use"]),
                         "first_chunk_time": first_chunk_time,
                         "last_chunk_time": last_chunk_time,
                         "final_usage": usage_data,
@@ -592,18 +553,14 @@ class ResponseProcessor:
 
                     # 计算响应时间
                     if first_chunk_time and last_chunk_time:
-                        summary["response_time_ms"] = (
-                            last_chunk_time - first_chunk_time
-                        ) * 1000
+                        summary["response_time_ms"] = (last_chunk_time - first_chunk_time) * 1000
 
                     # 写入摘要到文本文件
                     with open(debug_file, "w", encoding="utf-8") as f:
                         f.write("=" * 80 + "\n")
                         f.write("CLAUDE CODE STREAM DEBUG SUMMARY\n")
                         f.write("=" * 80 + "\n\n")
-                        f.write(
-                            json.dumps(summary, indent=2, ensure_ascii=False) + "\n\n"
-                        )
+                        f.write(json.dumps(summary, indent=2, ensure_ascii=False) + "\n\n")
                         f.write("=" * 80 + "\n")
                         f.write("ACCUMULATED CONTENT\n")
                         f.write("=" * 80 + "\n\n")
@@ -612,11 +569,9 @@ class ResponseProcessor:
                         f.write(f"Total chunks: {chunk_count}\n")
                         f.write(f"Content blocks: {len(content_blocks)}\n")
 
-                    logger.info(
-                        f"✅ 已保存stream debug文件: {debug_file} 和 {debug_file_json}"
-                    )
+                    logger.info(f"已保存stream debug文件: {debug_file} 和 {debug_file_json}")
                 except Exception as e:
-                    logger.warning(f"⚠️ 保存stream debug摘要错误: {e}")
+                    logger.warning(f"保存stream debug摘要错误: {e}")
 
             # 如果有时间数据，计算响应时间
             response_ms = None
@@ -625,7 +580,7 @@ class ResponseProcessor:
 
             # 验证usage已捕获
             if not usage_data:
-                logger.warning("⚠️ 未从流中捕获usage数据")
+                logger.warning("未从流中捕获usage数据")
 
             # --- yield finish状态 ---
             if finish_reason:
@@ -642,16 +597,14 @@ class ResponseProcessor:
                 )
                 if finish_msg_obj:
                     yield format_for_yield(finish_msg_obj)
-                logger.info(f"✅ yield finish状态: {finish_reason}")
+                logger.info(f"yield finish状态: {finish_reason}")
 
             # --- 保存并yield llm_response_end ---
             if last_assistant_message_object:
                 try:
                     # 构建llm_response_end内容
-                    logger.info("✅ 构建Claude Code llm_response_end")
-                    llm_end_content = self._serialize_claude_code_response(
-                        final_llm_response, usage_data
-                    )
+                    logger.info("构建Claude Code llm_response_end")
+                    llm_end_content = self._serialize_claude_code_response(final_llm_response, usage_data)
 
                     # 添加streaming标志和响应时间
                     llm_end_content["streaming"] = True
@@ -674,15 +627,13 @@ class ResponseProcessor:
                     # Yield到stream用于实时更新
                     if llm_end_msg_obj:
                         yield format_for_yield(llm_end_msg_obj)
-                    logger.info("✅ llm_response_end已保存")
+                    logger.info("llm_response_end已保存")
                 except Exception as e:
                     logger.error(f"保存llm_response_end错误: {str(e)}")
 
         except Exception as e:
             # 使用ErrorProcessor进行一致的错误处理
-            processed_error = ErrorProcessor.process_system_error(
-                e, context={"thread_id": thread_id}
-            )
+            processed_error = ErrorProcessor.process_system_error(e, context={"thread_id": thread_id})
             ErrorProcessor.log_error(processed_error)
 
             # 保存并生成错误状态消息
@@ -696,11 +647,7 @@ class ResponseProcessor:
                 type="status",
                 content=err_content,
                 is_llm_message=False,
-                metadata={
-                    "thread_run_id": thread_run_id
-                    if "thread_run_id" in locals()
-                    else None
-                },
+                metadata={"thread_run_id": thread_run_id if "thread_run_id" in locals() else None},
             )
             if err_msg_obj:
                 yield format_for_yield(err_msg_obj)
@@ -719,15 +666,11 @@ class ResponseProcessor:
                         await llm_response.aclose()
                         logger.debug(f"已关闭LLM响应generator - thread: {thread_id}")
                     except Exception as close_err:
-                        logger.debug(
-                            f"关闭LLM响应generator错误（可能不支持aclose）: {close_err}"
-                        )
+                        logger.debug(f"关闭LLM响应generator错误（可能不支持aclose）: {close_err}")
                 elif hasattr(llm_response, "close"):
                     try:
                         llm_response.close()
-                        logger.debug(
-                            f"已关闭LLM响应generator (sync close) - thread: {thread_id}"
-                        )
+                        logger.debug(f"已关闭LLM响应generator (sync close) - thread: {thread_id}")
                     except Exception as close_err:
                         logger.debug(f"关闭LLM响应generator错误 (sync): {close_err}")
             except Exception as cleanup_err:
@@ -736,16 +679,12 @@ class ResponseProcessor:
             # Billing保护：如果llm_response_end还没保存，在finally块中保存
             if not llm_response_end_saved and last_assistant_message_object:
                 try:
-                    logger.info(
-                        "💰 BULLETPROOF BILLING: 在finally块中保存llm_response_end"
-                    )
+                    logger.info("BULLETPROOF BILLING: 在finally块中保存llm_response_end")
                     if final_llm_response and usage_data:
-                        logger.info("💰 使用LLM响应中的精确usage")
-                        llm_end_content = self._serialize_claude_code_response(
-                            final_llm_response, usage_data
-                        )
+                        logger.info("使用LLM响应中的精确usage")
+                        llm_end_content = self._serialize_claude_code_response(final_llm_response, usage_data)
                     else:
-                        logger.warning("💰 没有LLM响应使用量 - 为计费估算token使用量")
+                        logger.warning("没有LLM响应使用量 - 为计费估算token使用量")
                         llm_end_content = {"model": llm_model, "usage": {}}
 
                     llm_end_content["streaming"] = True
@@ -770,12 +709,10 @@ class ResponseProcessor:
                             "llm_response_id": llm_response_id,
                         },
                     )
-                    logger.info("✅ llm_response_end已在finally块中保存")
+                    logger.info("llm_response_end已在finally块中保存")
                     llm_response_end_saved = True
                 except Exception as finally_err:
-                    logger.error(
-                        f"❌ 在finally块中保存llm_response_end失败: {str(finally_err)}"
-                    )
+                    logger.error(f"在finally块中保存llm_response_end失败: {str(finally_err)}")
 
             # Phase 4: 保存并yield thread_run_end状态
             # 注意：只在auto_continue_count == 0时保存thread_run_end（即最外层调用）
@@ -787,15 +724,10 @@ class ResponseProcessor:
                     type="status",
                     content=end_content,
                     is_llm_message=False,
-                    metadata={
-                        "thread_run_id": thread_run_id
-                        if "thread_run_id" in locals()
-                        else None
-                    },
-                    session_id=session_id,
+                    metadata={"thread_run_id": thread_run_id if "thread_run_id" in locals() else None},
                 )
                 # 不要yield - finally块中的yield会导致问题
-                logger.info("✅ thread_run_end已保存")
+                logger.info("thread_run_end已保存")
             except Exception as end_err:
                 logger.error(f"保存thread_run_end错误: {str(end_err)}")
                 # 不要re-raise - 让主异常传播
@@ -804,10 +736,10 @@ class ResponseProcessor:
         self,
         llm_response: Any,
         thread_id: str,
-        prompt_messages: List[Dict[str, Any]],
+        prompt_messages: list[dict[str, Any]],
         llm_model: str,
         config: ProcessorConfig = ProcessorConfig(),
-    ) -> AsyncGenerator[Dict[str, Any], None]:
+    ) -> AsyncGenerator[dict[str, Any], None]:
         """处理非流式LLM响应，处理工具调用和执行。
 
         参数:
@@ -848,15 +780,10 @@ class ResponseProcessor:
                     finish_reason = llm_response.choices[0].finish_reason
                     logger.debug(f"非流式finish_reason: {finish_reason}")
                 response_message = (
-                    llm_response.choices[0].message
-                    if hasattr(llm_response.choices[0], "message")
-                    else None
+                    llm_response.choices[0].message if hasattr(llm_response.choices[0], "message") else None
                 )
                 if response_message:
-                    if (
-                        hasattr(response_message, "content")
-                        and response_message.content
-                    ):
+                    if hasattr(response_message, "content") and response_message.content:
                         content = response_message.content
 
             # --- 保存并生成最终助手消息 ---
@@ -927,9 +854,7 @@ class ResponseProcessor:
 
         except Exception as e:
             # 使用ErrorProcessor进行一致的错误处理
-            processed_error = ErrorProcessor.process_system_error(
-                e, context={"thread_id": thread_id}
-            )
+            processed_error = ErrorProcessor.process_system_error(e, context={"thread_id": thread_id})
             ErrorProcessor.log_error(processed_error)
 
             # 保存并生成错误状态
@@ -943,11 +868,7 @@ class ResponseProcessor:
                 type="status",
                 content=err_content,
                 is_llm_message=False,
-                metadata={
-                    "thread_run_id": thread_run_id
-                    if "thread_run_id" in locals()
-                    else None
-                },
+                metadata={"thread_run_id": thread_run_id if "thread_run_id" in locals() else None},
             )
             if err_msg_obj:
                 yield format_for_yield(err_msg_obj)
@@ -965,11 +886,7 @@ class ResponseProcessor:
                 type="status",
                 content=end_content,
                 is_llm_message=False,
-                metadata={
-                    "thread_run_id": thread_run_id
-                    if "thread_run_id" in locals()
-                    else None
-                },
+                metadata={"thread_run_id": thread_run_id if "thread_run_id" in locals() else None},
             )
             if end_msg_obj:
                 yield format_for_yield(end_msg_obj)
@@ -977,11 +894,11 @@ class ResponseProcessor:
     async def _add_tool_result(
         self,
         thread_id: str,
-        tool_call: Dict[str, Any],
+        tool_call: dict[str, Any],
         result: ToolResult,
         strategy: Union[XmlAddingStrategy, str] = "assistant_message",
         assistant_message_id: Optional[str] = None,
-    ) -> Optional[Dict[str, Any]]:  # 返回完整的消息对象
+    ) -> Optional[dict[str, Any]]:  # 返回完整的消息对象
         """根据指定格式将工具结果添加到对话线程。
 
         该方法格式化工具结果并将其添加到对话历史记录中，
@@ -1015,9 +932,7 @@ class ResponseProcessor:
                     content = result
                 elif hasattr(result, "output"):
                     # 如果是ToolResult对象
-                    if isinstance(result.output, dict) or isinstance(
-                        result.output, list
-                    ):
+                    if isinstance(result.output, (dict, list)):
                         # 如果输出已经是dict或list，转换为JSON字符串
                         content = json.dumps(result.output)
                     else:
@@ -1037,9 +952,7 @@ class ResponseProcessor:
                     "content": content,
                 }
 
-                logger.debug(
-                    f"为tool_call_id={tool_call['id']}添加原生工具结果，角色为tool"
-                )
+                logger.debug(f"为tool_call_id={tool_call['id']}添加原生工具结果，角色为tool")
 
                 # 作为工具消息添加到对话历史记录
                 # 这使结果在下一轮对LLM可见
@@ -1106,9 +1019,7 @@ class ResponseProcessor:
                     type="tool",
                     content=fallback_message,
                     is_llm_message=True,
-                    metadata={"assistant_message_id": assistant_message_id}
-                    if assistant_message_id
-                    else {},
+                    metadata={"assistant_message_id": assistant_message_id} if assistant_message_id else {},
                 )
                 return message_obj  # 返回完整的消息对象
             except Exception as e2:
@@ -1117,9 +1028,9 @@ class ResponseProcessor:
 
     def _create_structured_tool_result(
         self,
-        tool_call: Dict[str, Any],
+        tool_call: dict[str, Any],
         result: ToolResult,
-        parsing_details: Optional[Dict[str, Any]] = None,
+        parsing_details: Optional[dict[str, Any]] = None,
         for_llm: bool = False,
     ):
         """创建与工具无关且提供丰富信息的结构化工具结果格式。
@@ -1160,9 +1071,7 @@ class ResponseProcessor:
                 "result": {
                     "success": result.success if hasattr(result, "success") else True,
                     "output": output,
-                    "error": getattr(result, "error", None)
-                    if hasattr(result, "error")
-                    else None,
+                    "error": getattr(result, "error", None) if hasattr(result, "error") else None,
                 },
             }
         }
@@ -1171,7 +1080,7 @@ class ResponseProcessor:
 
     def _create_tool_context(
         self,
-        tool_call: Dict[str, Any],
+        tool_call: dict[str, Any],
         tool_index: int,
         assistant_message_id: Optional[str] = None,
     ) -> ToolExecutionContext:
@@ -1188,7 +1097,7 @@ class ResponseProcessor:
 
     async def _yield_and_save_tool_started(
         self, context: ToolExecutionContext, thread_id: str, thread_run_id: str
-    ) -> Optional[Dict[str, Any]]:
+    ) -> Optional[dict[str, Any]]:
         """格式化、保存并返回工具开始状态消息。"""
         tool_name = context.function_name
         content = {
@@ -1197,9 +1106,7 @@ class ResponseProcessor:
             "function_name": context.function_name,
             "message": f"开始执行 {tool_name}",
             "tool_index": context.tool_index,
-            "tool_call_id": context.tool_call.get(
-                "id"
-            ),  # 如果是原生的，包含tool_call ID
+            "tool_call_id": context.tool_call.get("id"),  # 如果是原生的，包含tool_call ID
         }
         metadata = {"thread_run_id": thread_run_id}
         saved_message_obj = await self.add_message(
@@ -1217,19 +1124,15 @@ class ResponseProcessor:
         tool_message_id: Optional[str],
         thread_id: str,
         thread_run_id: str,
-    ) -> Optional[Dict[str, Any]]:
+    ) -> Optional[dict[str, Any]]:
         """格式化、保存并返回工具完成/失败状态消息。"""
         if not context.result:
             # 如果结果缺失（例如执行失败），委托给错误保存
-            return await self._yield_and_save_tool_error(
-                context, thread_id, thread_run_id
-            )
+            return await self._yield_and_save_tool_error(context, thread_id, thread_run_id)
 
         tool_name = context.function_name
         status_type = "tool_completed" if context.result.success else "tool_failed"
-        message_text = (
-            f"工具 {tool_name} {'成功完成' if context.result.success else '失败'}"
-        )
+        message_text = f"工具 {tool_name} {'成功完成' if context.result.success else '失败'}"
 
         content = {
             "role": "assistant",
@@ -1261,7 +1164,7 @@ class ResponseProcessor:
 
     async def _yield_and_save_tool_error(
         self, context: ToolExecutionContext, thread_id: str, thread_run_id: str
-    ) -> Optional[Dict[str, Any]]:
+    ) -> Optional[dict[str, Any]]:
         """格式化、保存并返回工具错误状态消息。"""
         error_msg = str(context.error) if context.error else "工具执行期间未知错误"
         tool_name = context.function_name
@@ -1284,7 +1187,7 @@ class ResponseProcessor:
         )
         return saved_message_obj
 
-    def _format_assistant_message_content(self, content_blocks: List) -> Dict:
+    def _format_assistant_message_content(self, content_blocks: list) -> dict:
         """格式化assistant消息内容，兼容TextBlock和ToolUseBlock。
 
         Args:
@@ -1301,9 +1204,7 @@ class ResponseProcessor:
             if block_type == "TextBlock":
                 text_parts.append(block.text)
             elif block_type == "ToolUseBlock":
-                tool_calls.append(
-                    {"id": block.id, "name": block.name, "input": block.input}
-                )
+                tool_calls.append({"id": block.id, "name": block.name, "input": block.input})
 
         result = {"role": "assistant", "content": "".join(text_parts)}
 
@@ -1312,9 +1213,7 @@ class ResponseProcessor:
 
         return result
 
-    def _serialize_claude_code_response(
-        self, claude_response, usage_data: Dict
-    ) -> Dict:
+    def _serialize_claude_code_response(self, claude_response, usage_data: dict) -> dict:
         """序列化Claude Code响应对象用于保存llm_response_end。
 
         Args:
@@ -1326,7 +1225,7 @@ class ResponseProcessor:
         """
         result = {
             "model": getattr(claude_response, "model", "kimi-for-coding"),
-            "usage": usage_data if usage_data else {},
+            "usage": usage_data or {},
         }
 
         # 如果是ResultMessage，提取更多信息
