@@ -7,7 +7,7 @@ from fastapi import HTTPException
 from loguru import logger
 
 from core.services import redis
-from run_agent_background import _cleanup_redis_response_list, update_agent_run_status
+from run_agent_background import _cleanup_redis_stream, update_agent_run_status
 
 
 async def cleanup_instance_runs(instance_id: str):
@@ -20,18 +20,14 @@ async def cleanup_instance_runs(instance_id: str):
             return
 
         running_keys = await redis.keys(f"active_run:{instance_id}:*")
-        logger.debug(
-            f"找到实例 {instance_id} 需要清理的 {len(running_keys)} 个运行中agent"
-        )
+        logger.debug(f"找到实例 {instance_id} 需要清理的 {len(running_keys)} 个运行中agent")
 
         for key in running_keys:
             # 键格式: active_run:{instance_id}:{agent_run_id}
             parts = key.split(":")
             if len(parts) == 3:
                 agent_run_id = parts[2]
-                await stop_agent_run_with_helpers(
-                    agent_run_id, error_message=f"实例 {instance_id} 正在关闭"
-                )
+                await stop_agent_run_with_helpers(agent_run_id, error_message=f"实例 {instance_id} 正在关闭")
             else:
                 logger.warning(f"发现了不符合预期格式的key: {key}")
 
@@ -39,9 +35,7 @@ async def cleanup_instance_runs(instance_id: str):
         logger.error("清理实例 {} 的运行中 agent 失败: {}", instance_id, e)
 
 
-async def stop_agent_run_with_helpers(
-    agent_run_id: str, error_message: Optional[str] = None
-):
+async def stop_agent_run_with_helpers(agent_run_id: str, error_message: Optional[str] = None):
     """
     停止 agent 运行并清理所有相关资源。
 
@@ -59,22 +53,18 @@ async def stop_agent_run_with_helpers(
 
     final_status = "failed" if error_message else "stopped"
 
-    # 尝试从 Redis 获取最终响应
-    response_list_key = f"agent_run:{agent_run_id}:responses"
+    # 尝试从 Redis Stream 获取最终响应
+    stream_key = f"agent_run:{agent_run_id}:stream"
     all_responses = []
     try:
-        all_responses_json = await redis.lrange(response_list_key, 0, -1)
-        all_responses = [json.loads(r) for r in all_responses_json]
-        logger.debug(
-            f"从Redis获取了{len(all_responses)}个响应，用于在停止/失败时更新数据库：{agent_run_id}"
-        )
+        stream_messages = await redis.xrange(stream_key)
+        all_responses = [json.loads(msg[1]["data"]) for msg in stream_messages]
+        logger.debug(f"从 Redis Stream 获取了 {len(all_responses)} 个响应，用于在停止/失败时更新数据库：{agent_run_id}")
     except Exception as e:
-        logger.error("在停止/失败期间，从Redis获取{}的响应失败：{}", agent_run_id, e)
+        logger.error("在停止/失败期间，从 Redis Stream 获取 {} 的响应失败：{}", agent_run_id, e)
 
     # 在数据库中更新 agent 运行状态
-    update_success = await update_agent_run_status(
-        agent_run_id, final_status, error=error_message
-    )
+    update_success = await update_agent_run_status(agent_run_id, final_status, error=error_message)
 
     if not update_success:
         logger.error(f"更新已停止/失败的运行 {agent_run_id} 的数据库状态失败")
@@ -91,32 +81,24 @@ async def stop_agent_run_with_helpers(
     # 查找处理此 agent 运行的所有实例，并向实例特定通道发送 STOP 信号
     try:
         instance_keys = await redis.keys(f"active_run:*:{agent_run_id}")
-        logger.debug(
-            f"为agent运行 {agent_run_id} 找到了 {len(instance_keys)} 个活跃实例keys"
-        )
+        logger.debug(f"为agent运行 {agent_run_id} 找到了 {len(instance_keys)} 个活跃实例keys")
 
         for key in instance_keys:
             # 键格式: active_run:{instance_id}:{agent_run_id}
             parts = key.split(":")
             if len(parts) == 3:
                 instance_id_from_key = parts[1]
-                instance_control_channel = (
-                    f"agent_run:{agent_run_id}:control:{instance_id_from_key}"
-                )
+                instance_control_channel = f"agent_run:{agent_run_id}:control:{instance_id_from_key}"
                 try:
                     await redis.publish(instance_control_channel, "STOP")
-                    logger.debug(
-                        f"已向实例通道 {instance_control_channel} 发布 STOP 信号"
-                    )
+                    logger.debug(f"已向实例通道 {instance_control_channel} 发布 STOP 信号")
                 except Exception as e:
-                    logger.warning(
-                        f"向实例通道 {instance_control_channel} 发布 STOP 信号失败: {str(e)}"
-                    )
+                    logger.warning(f"向实例通道 {instance_control_channel} 发布 STOP 信号失败: {str(e)}")
             else:
                 logger.warning(f"发现了不符合预期格式的key: {key}")
 
-        # 在停止/失败时立即清理响应列表
-        await _cleanup_redis_response_list(agent_run_id)
+        # 在停止/失败时立即清理 Stream
+        await _cleanup_redis_stream(agent_run_id)
 
     except Exception as e:
         logger.error("无法找到或通知{}的活跃实例：{}", agent_run_id, e)

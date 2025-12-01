@@ -640,7 +640,7 @@ async def get_agent_run(agent_run_id: str, user_id: str = Depends(verify_and_get
     operation_id="stream_agent_run",
 )
 async def stream_agent_run(agent_run_id: str, token: Optional[str] = None, request: Request = None):
-    """使用Redis列表和发布/订阅流式传输代理运行的响应。"""
+    """使用 Redis Stream 和 Pub/Sub 控制信号流式传输代理运行的响应。"""
     logger.debug(f"开始代理运行的流式传输: {agent_run_id}")
 
     user_id = await get_user_id_from_stream_auth(request, token)  # 实际上瞬间完成
@@ -651,28 +651,25 @@ async def stream_agent_run(agent_run_id: str, token: Optional[str] = None, reque
         user_id=user_id,
     )
 
-    response_list_key = f"agent_run:{agent_run_id}:responses"
-    response_channel = f"agent_run:{agent_run_id}:new_response"
+    stream_key = f"agent_run:{agent_run_id}:stream"
     control_channel = f"agent_run:{agent_run_id}:control"  # 全局控制通道
 
     async def stream_generator(agent_run_data):
-        logger.debug(f"通过 Redis 列表 {response_list_key} 与频道 {response_channel} 为 {agent_run_id} 推送流式响应")
-        last_processed_index = -1
-        # 单个pubsub用于响应+控制
-        listener_task = None
+        logger.debug(f"通过 Redis Stream {stream_key} 为 {agent_run_id} 推送流式响应")
+        last_id = "0"  # 从头开始读取
+        pubsub = None
         terminate_stream = False
         initial_yield_complete = False
 
         try:
-            # 1. 从Redis列表获取并发送初始响应
-            initial_responses_json = await redis.lrange(response_list_key, 0, -1)
-            initial_responses = []
-            if initial_responses_json:
-                initial_responses = [json.loads(r) for r in initial_responses_json]
-                logger.debug(f"为 {agent_run_id} 发送 {len(initial_responses)} 个初始响应")
-                for response in initial_responses:
+            # 1. 从 Redis Stream 获取并发送初始历史消息
+            initial_messages = await redis.xrange(stream_key)
+            if initial_messages:
+                logger.debug(f"为 {agent_run_id} 发送 {len(initial_messages)} 个初始响应")
+                for msg_id, fields in initial_messages:
+                    response = json.loads(fields["data"])
                     yield f"data: {json.dumps(response)}\n\n"
-                last_processed_index = len(initial_responses) - 1
+                    last_id = msg_id
             initial_yield_complete = True
 
             # 2. 检查运行状态
@@ -687,76 +684,25 @@ async def stream_agent_run(agent_run_id: str, token: Optional[str] = None, reque
                 thread_id=agent_run_data.get("thread_id"),
             )
 
-            # 3. 使用单个Pub/Sub连接订阅两个通道
+            # 3. 订阅控制通道（仅用于接收控制信号）
             pubsub = await redis.create_pubsub()
-            await pubsub.subscribe(response_channel, control_channel)
-            logger.debug(f"已订阅通道: {response_channel}, {control_channel}")
+            await pubsub.subscribe(control_channel)
+            logger.debug(f"已订阅控制通道: {control_channel}")
 
-            # 用于监听器和主生成器循环之间通信的队列
-            message_queue = asyncio.Queue()
-
-            async def listen_messages():
-                listener = pubsub.listen()
-                task = asyncio.create_task(listener.__anext__())
-
-                while not terminate_stream:
-                    done, _ = await asyncio.wait([task], return_when=asyncio.FIRST_COMPLETED)
-                    for finished in done:
-                        try:
-                            message = finished.result()
-                            if message and isinstance(message, dict) and message.get("type") == "message":
-                                channel = message.get("channel")
-                                data = message.get("data")
-                                if isinstance(data, bytes):
-                                    data = data.decode("utf-8")
-
-                                if channel == response_channel and data == "new":
-                                    await message_queue.put({"type": "new_response"})
-                                elif channel == control_channel and data in [
-                                    "STOP",
-                                    "END_STREAM",
-                                    "ERROR",
-                                ]:
-                                    logger.debug(f"接收到 {agent_run_id} 的控制信号 '{data}'")
-                                    await message_queue.put({"type": "control", "data": data})
-                                    return  # 收到控制信号时停止监听
-
-                        except StopAsyncIteration:
-                            logger.warning(f"{agent_run_id} 的监听器已停止。")
-                            await message_queue.put(
-                                {
-                                    "type": "error",
-                                    "data": "监听器意外停止",
-                                }
-                            )
-                            return
-                        except Exception as e:
-                            logger.error(f"{agent_run_id} 的监听器出错：{e}")
-                            await message_queue.put({"type": "error", "data": "监听器故障"})
-                            return
-                        finally:
-                            # 如果继续则重新订阅下一条消息
-                            if not terminate_stream:
-                                task = asyncio.create_task(listener.__anext__())
-
-            listener_task = asyncio.create_task(listen_messages())
-
-            # 4. 主循环处理队列中的消息
+            # 4. 主循环：使用短阻塞读取 Stream + 检查控制信号
             while not terminate_stream:
                 try:
-                    queue_item = await message_queue.get()
+                    # 短阻塞读取 Stream，便于检查控制信号
+                    result = await redis.xread({stream_key: last_id}, block=500, count=10)
 
-                    if queue_item["type"] == "new_response":
-                        # 从 Redis 列表中抓取自上次处理位置之后的新响应
-                        new_start_index = last_processed_index + 1
-                        new_responses_json = await redis.lrange(response_list_key, new_start_index, -1)
-
-                        if new_responses_json:
-                            new_responses = [json.loads(r) for r in new_responses_json]
-                            num_new = len(new_responses)
-                            # logger.debug(f"收到 {agent_run_id} 的 {num_new} 条新响应（自索引 {new_start_index} 起）")
-                            for response in new_responses:
+                    if result:
+                        # result 格式: [[stream_name, [(msg_id, {fields}), ...]], ...]
+                        for stream_name, messages in result:
+                            for msg_id, fields in messages:
+                                last_id = msg_id
+                                response = json.loads(fields["data"])
                                 yield f"data: {json.dumps(response)}\n\n"
+
                                 # 检查该响应是否标识任务结束
                                 if response.get("type") == "status" and response.get("status") in [
                                     "completed",
@@ -765,22 +711,24 @@ async def stream_agent_run(agent_run_id: str, token: Optional[str] = None, reque
                                 ]:
                                     logger.debug(f"流式数据中检测到状态变更，任务结束：{response.get('status')}")
                                     terminate_stream = True
-                                    break  # 停止继续处理后续新响应
-                            last_processed_index += num_new
-                        if terminate_stream:
+                                    break
+                            if terminate_stream:
+                                break
+
+                    if terminate_stream:
+                        break
+
+                    # 检查控制信号（非阻塞）
+                    control_msg = await pubsub.get_message(ignore_subscribe_messages=True, timeout=0)
+                    if control_msg and control_msg.get("type") == "message":
+                        data = control_msg.get("data")
+                        if isinstance(data, bytes):
+                            data = data.decode("utf-8")
+                        if data in ["STOP", "END_STREAM", "ERROR"]:
+                            logger.debug(f"接收到 {agent_run_id} 的控制信号 '{data}'")
+                            terminate_stream = True
+                            yield f"data: {json.dumps({'type': 'status', 'status': data})}\n\n"
                             break
-
-                    elif queue_item["type"] == "control":
-                        control_signal = queue_item["data"]
-                        terminate_stream = True  # 一旦收到任何控制信号，立即停止流式推送
-                        yield f"data: {json.dumps({'type': 'status', 'status': control_signal})}\n\n"
-                        break
-
-                    elif queue_item["type"] == "error":
-                        logger.error(f"{agent_run_id} 监听器报错：{queue_item['data']}")
-                        terminate_stream = True
-                        yield f"data: {json.dumps({'type': 'status', 'status': 'error'})}\n\n"
-                        break
 
                 except asyncio.CancelledError:
                     logger.debug(f"{agent_run_id} 的流式生成主循环已取消")
@@ -799,20 +747,19 @@ async def stream_agent_run(agent_run_id: str, token: Optional[str] = None, reque
                 yield f"data: {json.dumps({'type': 'status', 'status': 'error', 'message': f'启动流失败: {e}'})}\n\n"
         finally:
             terminate_stream = True
-            # 优雅关闭顺序: 取消订阅 → 关闭 → 取消
-            # 即使任务被取消，也要确保清理工作完成。
+            # 优雅关闭 PubSub
             pubsub_cleaned = False
             try:
-                if "pubsub" in locals() and pubsub:
-                    await pubsub.unsubscribe(response_channel, control_channel)
+                if pubsub:
+                    await pubsub.unsubscribe(control_channel)
                     await pubsub.close()
                     pubsub_cleaned = True
                     logger.debug("已清理 {} 的 PubSub", agent_run_id)
             except asyncio.CancelledError:
                 # 即使在取消时也要尝试清理
-                if "pubsub" in locals() and pubsub and not pubsub_cleaned:
+                if pubsub and not pubsub_cleaned:
                     try:
-                        await pubsub.unsubscribe(response_channel, control_channel)
+                        await pubsub.unsubscribe(control_channel)
                         await pubsub.close()
                         logger.debug(f"{agent_run_id} 已取消，相关 PubSub 已清理完毕")
                     except Exception:
@@ -820,16 +767,6 @@ async def stream_agent_run(agent_run_id: str, token: Optional[str] = None, reque
             except Exception as e:
                 logger.warning("清理 {} 的 PubSub 时出错：{}", agent_run_id, e)
 
-            if listener_task:
-                listener_task.cancel()
-                try:
-                    await listener_task  # 回收内部任务并忽略其错误
-                except asyncio.CancelledError:
-                    pass
-                except Exception as e:
-                    logger.debug("listener_task 因 {} 退出", e)
-            # 短暂等待任务取消
-            await asyncio.sleep(0.1)
             logger.debug("agent run {} 的流式清理已完成", agent_run_id)
 
     return StreamingResponse(

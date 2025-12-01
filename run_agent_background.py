@@ -36,7 +36,7 @@ dramatiq.set_broker(redis_broker)
 
 _initialized = False
 instance_id = ""
-REDIS_RESPONSE_LIST_TTL = 3600  # 1 小时
+REDIS_STREAM_TTL = 3600  # 1 小时
 
 
 def check_terminating_tool_call(response: dict[str, Any]) -> Optional[str]:
@@ -152,8 +152,7 @@ async def send_failure_notification(thread_id: str, error_message: str):
 
 def create_redis_keys(agent_run_id: str, instance_id: str) -> dict[str, str]:
     return {
-        "response_list": f"agent_run:{agent_run_id}:responses",
-        "response_channel": f"agent_run:{agent_run_id}:new_response",
+        "response_stream": f"agent_run:{agent_run_id}:stream",
         "instance_control_channel": f"agent_run:{agent_run_id}:control:{instance_id}",
         "global_control_channel": f"agent_run:{agent_run_id}:control",
         "instance_active": f"active_run:{instance_id}:{agent_run_id}",
@@ -210,7 +209,6 @@ async def process_agent_responses(
     first_response_logged = False
     complete_tool_called = False
     total_responses = 0
-    pending_redis_operations = []
 
     async for response in agent_gen:
         if not first_response_logged:
@@ -224,8 +222,8 @@ async def process_agent_responses(
             break
 
         response_json = json.dumps(response)
-        pending_redis_operations.append(asyncio.create_task(redis.rpush(redis_keys["response_list"], response_json)))
-        pending_redis_operations.append(asyncio.create_task(redis.publish(redis_keys["response_channel"], "new")))
+        # 直接同步调用 xadd 确保消息顺序
+        await redis.xadd(redis_keys["response_stream"], {"data": response_json})
         total_responses += 1
         stop_signal_checker_state["total_responses"] = total_responses
 
@@ -247,7 +245,6 @@ async def process_agent_responses(
                     logger.error(f"agent run 失败：{error_message}")
                 break
 
-    stop_signal_checker_state["pending_redis_operations"] = pending_redis_operations
     return final_status, error_message, complete_tool_called, total_responses
 
 
@@ -257,8 +254,8 @@ async def handle_normal_completion(
     duration = (datetime.now() - start_time).total_seconds()
     logger.info(f"agent run {agent_run_id} 正常结束（耗时 {duration:.2f} 秒，返回 {total_responses} 条响应）")
     completion_message = {"type": "status", "status": "completed", "message": "agent run 正常结束"}
-    await redis.rpush(redis_keys["response_list"], json.dumps(completion_message))
-    await redis.publish(redis_keys["response_channel"], "new")
+    # 使用 Redis Stream 替代 List + Pub/Sub
+    await redis.xadd(redis_keys["response_stream"], {"data": json.dumps(completion_message)})
     return completion_message
 
 
@@ -417,8 +414,6 @@ async def run_agent_background(
             total_responses,
         ) = await process_agent_responses(agent_gen, agent_run_id, redis_keys, worker_start, stop_signal_checker_state)
 
-        pending_redis_operations = stop_signal_checker_state.get("pending_redis_operations", [])
-
         if final_status == "running":
             final_status = "completed"
             await handle_normal_completion(agent_run_id, start_time, total_responses, redis_keys)
@@ -428,8 +423,9 @@ async def run_agent_background(
             if not complete_tool_called:
                 logger.info("agent run {} 未调用 complete 工具即结束，跳过通知。", agent_run_id)
 
-        all_responses_json = await redis.lrange(redis_keys["response_list"], 0, -1)
-        all_responses = [json.loads(r) for r in all_responses_json]
+        # 从 Stream 读取所有响应
+        all_stream_messages = await redis.xrange(redis_keys["response_stream"])
+        all_responses = [json.loads(msg[1]["data"]) for msg in all_stream_messages]
 
         await update_agent_run_status(
             agent_run_id,
@@ -446,20 +442,21 @@ async def run_agent_background(
         error_message = str(e)
         traceback_str = traceback.format_exc()
         duration = (datetime.now() - start_time).total_seconds()
-        logger.error(
-            f"agent run {agent_run_id} 运行 {duration:.2f} 秒后报错：{error_message}\n{traceback_str}（实例：{instance_id}）"
+        error_msg = (
+            f"agent run {agent_run_id} 运行 {duration:.2f} 秒后报错：{error_message}\n"
+            f"{traceback_str}（实例：{instance_id}）"
         )
+        logger.error(error_msg)
         final_status = "failed"
 
         await send_failure_notification(thread_id, error_message)
 
-        # 将错误消息推送到 Redis 列表
+        # 将错误消息推送到 Redis Stream
         error_response = {"type": "status", "status": "error", "message": error_message}
         try:
-            await redis.rpush(redis_keys["response_list"], json.dumps(error_response))
-            await redis.publish(redis_keys["response_channel"], "new")
+            await redis.xadd(redis_keys["response_stream"], {"data": json.dumps(error_response)})
         except Exception as redis_err:
-            logger.error("向 Redis 推送 {} 的错误响应失败：{}", agent_run_id, redis_err)
+            logger.error("向 Redis Stream 推送 {} 的错误响应失败：{}", agent_run_id, redis_err)
 
         # 更新数据库状态
         await update_agent_run_status(agent_run_id, "failed", error=f"{error_message}\n{traceback_str}")
@@ -483,14 +480,9 @@ async def run_agent_background(
                 logger.warning("取消停止检查器时出错：{}", e)
 
         await cleanup_pubsub(pubsub, agent_run_id)
-        await _cleanup_redis_response_list(agent_run_id)
+        await _cleanup_redis_stream(agent_run_id)
         await _cleanup_redis_instance_key(agent_run_id, instance_id)
         await _cleanup_redis_run_lock(agent_run_id)
-
-        try:
-            await asyncio.wait_for(asyncio.gather(*pending_redis_operations), timeout=30.0)
-        except TimeoutError:
-            logger.warning("等待 {} 的 Redis 操作超时", agent_run_id)
 
         logger.debug(
             "agent run 后台任务已完全结束：{}（实例：{}），最终状态：{}",
@@ -525,14 +517,14 @@ async def _cleanup_redis_run_lock(agent_run_id: str):
         logger.warning(f"清理 Redis 运行锁键失败 {run_lock_key}: {str(e)}")
 
 
-async def _cleanup_redis_response_list(agent_run_id: str):
-    """在 Redis 响应列表上设置 TTL。"""
-    response_list_key = f"agent_run:{agent_run_id}:responses"
+async def _cleanup_redis_stream(agent_run_id: str):
+    """在 Redis Stream 上设置 TTL。"""
+    stream_key = f"agent_run:{agent_run_id}:stream"
     try:
-        await redis.expire(response_list_key, REDIS_RESPONSE_LIST_TTL)
-        # logger.debug(f"已设置响应列表 TTL ({REDIS_RESPONSE_LIST_TTL}秒): {response_list_key}")
+        await redis.expire(stream_key, REDIS_STREAM_TTL)
+        # logger.debug(f"已设置 Stream TTL ({REDIS_STREAM_TTL}秒): {stream_key}")
     except Exception as e:
-        logger.warning(f"设置响应列表 TTL 失败 {response_list_key}: {str(e)}")
+        logger.warning(f"设置 Stream TTL 失败 {stream_key}: {str(e)}")
 
 
 async def update_agent_run_status(
