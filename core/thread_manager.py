@@ -244,6 +244,7 @@ class ThreadManager:
                     llm_model,
                     tools=openapi_tool_schemas,
                     stream=stream,
+                    system_prompt=system_prompt.get("content"),
                     session_id=session_id,
                 )
             except LLMError as e:
