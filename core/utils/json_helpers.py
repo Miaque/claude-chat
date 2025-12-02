@@ -1,11 +1,9 @@
 import json
 import uuid
-from typing import Any, Dict, List, Optional, Union
+from typing import Any, Optional, Union
 
 
-def ensure_dict(
-    value: Union[str, Dict[str, Any], None], default: Optional[Dict[str, Any]] = None
-) -> Dict[str, Any]:
+def ensure_dict(value: Union[str, dict[str, Any], None], default: Optional[dict[str, Any]] = None) -> dict[str, Any]:
     """
     确保一个值是字典类型。
 
@@ -43,9 +41,7 @@ def ensure_dict(
     return default
 
 
-def ensure_list(
-    value: Union[str, List[Any], None], default: Optional[List[Any]] = None
-) -> List[Any]:
+def ensure_list(value: Union[str, list[Any], None], default: Optional[list[Any]] = None) -> list[Any]:
     """
     确保一个值是列表类型。
 
@@ -83,9 +79,7 @@ def ensure_list(
     return default
 
 
-def safe_json_parse(
-    value: Union[str, Dict, List, Any], default: Optional[Any] = None
-) -> Any:
+def safe_json_parse(value: Union[str, dict, list, Any], default: Optional[Any] = None) -> Any:
     """
     安全地解析可能是 JSON 字符串或已解析对象的值。
 
@@ -143,7 +137,7 @@ def to_json_string(value: Any) -> str:
     return json.dumps(value)
 
 
-def format_for_yield(message_object: Dict[str, Any]) -> Dict[str, Any]:
+def format_for_yield(message_object: dict[str, Any]) -> dict[str, Any]:
     """
     格式化消息对象以便生成，确保 content 和 metadata 是 JSON 字符串。
 

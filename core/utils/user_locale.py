@@ -1,4 +1,4 @@
-# Supported locales (must match frontend)
+# 支持的地区
 SUPPORTED_LOCALES = ["en", "de", "it", "zh", "ja", "pt", "fr", "es"]
 DEFAULT_LOCALE = "zh"
 
@@ -9,13 +9,13 @@ async def get_user_locale(user_id: str) -> str:
 
 def get_locale_context_prompt(locale: str) -> str:
     """
-    Generate a locale-specific context prompt to add to the system prompt.
+    生成一段面向本地化的上下文提示词，追加至系统提示词中。
 
-    Args:
-        locale: User's preferred locale ('en', 'de', 'it', 'zh', 'ja', 'pt', 'fr', 'es')
+    参数:
+        locale: 用户的首选地区 ('en', 'de', 'it', 'zh', 'ja', 'pt', 'fr', 'es')
 
-    Returns:
-        Formatted prompt string with locale instructions
+    返回:
+        格式化后的提示词字符串，包含地区指令
     """
     locale_instructions = {
         "en": """## LANGUAGE PREFERENCE
@@ -36,4 +36,4 @@ L'utilisateur a défini le français comme langue préférée. Tu dois répondre
 El usuario ha establecido el español como idioma preferido. Debes responder en español usando un tono informal, semi-personal y neutro. Usa "tú" en lugar de "usted" y un lenguaje casual pero profesional en todas tus respuestas, explicaciones e interacciones.""",
     }
 
-    return locale_instructions.get(locale, locale_instructions["en"])
+    return locale_instructions.get(locale, locale_instructions[DEFAULT_LOCALE])
