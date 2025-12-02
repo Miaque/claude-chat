@@ -1,4 +1,5 @@
 import uuid
+
 import pytest
 
 from core.utils.project_helpers import generate_and_update_project_name

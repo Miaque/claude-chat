@@ -26,7 +26,7 @@ async def generate_and_update_project_name(project_id: str, prompt: str):
 
         # 使用预加载的 Lucide React 图标
         relevant_icons = RELEVANT_ICONS
-        system_prompt = f"""You are a helpful assistant that generates extremely concise titles (2-4 words maximum) and selects appropriate icons for chat threads based on the user's message.
+        system_prompt = f"""You are a helpful assistant that generates extremely concise titles (2-4 words maximum) and selects appropriate icons for chat threads based on the user's message. Always respond in Chinese.
 
         Available Lucide React icons to choose from:
         {", ".join(relevant_icons)}
@@ -51,6 +51,13 @@ async def generate_and_update_project_name(project_id: str, prompt: str):
             stream=False,
             system_prompt=system_prompt,
             prompt=user_message,
+            output_format={
+                "type": "json_schema",
+                "schema": {
+                    "title": {"type": "string"},
+                    "icon": {"type": "string", "enum": relevant_icons},
+                },
+            },
         )
 
         generated_name = None
@@ -66,72 +73,50 @@ async def generate_and_update_project_name(project_id: str, prompt: str):
                     title = parsed_response.get("title", "").strip()
                     if title:
                         generated_name = title.strip("'\" \n\t")
-                        logger.debug(
-                            f"已生成项目 {project_id} 的名称: '{generated_name}'"
-                        )
+                        logger.debug(f"已生成项目 {project_id} 的名称: '{generated_name}'")
 
                     # 提取图标
                     icon = parsed_response.get("icon", "").strip()
                     if icon and icon in relevant_icons:
                         selected_icon = icon
-                        logger.debug(
-                            f"已选择项目 {project_id} 的图标: '{selected_icon}'"
-                        )
+                        logger.debug(f"已选择项目 {project_id} 的图标: '{selected_icon}'")
                     else:
-                        logger.warning(
-                            f"项目 {project_id} 选择了无效的图标 '{icon}'，使用默认的 'message-circle'"
-                        )
+                        logger.warning(f"项目 {project_id} 选择了无效的图标 '{icon}'，使用默认的 'message-circle'")
                         selected_icon = "message-circle"
                 else:
-                    logger.warning(
-                        f"项目 {project_id} 返回了非字典类型的JSON: {parsed_response}"
-                    )
+                    logger.warning(f"项目 {project_id} 返回了非字典类型的JSON: {parsed_response}")
 
             except json.JSONDecodeError as e:
-                logger.warning(
-                    f"解析项目 {project_id} 的LLM JSON响应失败: {e}。原始内容: {raw_content}"
-                )
+                logger.warning(f"解析项目 {project_id} 的LLM JSON响应失败: {e}。原始内容: {raw_content}")
                 # 从原始内容中提取标题作为回退方案
                 cleaned_content = raw_content.strip("'\" \n\t{}")
                 if cleaned_content:
                     generated_name = cleaned_content[:50]  # 限制回退标题长度
                 selected_icon = "message-circle"  # 默认图标
         else:
-            logger.warning(
-                f"为项目 {project_id} 命名时未能从LLM获得有效响应。响应: {response}"
-            )
+            logger.warning(f"为项目 {project_id} 命名时未能从LLM获得有效响应。响应: {response}")
 
         if generated_name:
             # 将标题和图标存储到专用字段中
             with get_db() as db:
-                project = (
-                    db.query(Project).filter(Project.project_id == project_id).first()
-                )
+                project = db.query(Project).filter(Project.project_id == project_id).first()
                 if project:
                     project.name = generated_name
                     if selected_icon:
                         project.icon_name = selected_icon
-                        logger.debug(
-                            f"存储项目 {project_id}，标题为: '{generated_name}'，图标为: '{selected_icon}'"
-                        )
+                        logger.debug(f"存储项目 {project_id}，标题为: '{generated_name}'，图标为: '{selected_icon}'")
                     else:
-                        logger.debug(
-                            f"存储项目 {project_id}，标题为: '{generated_name}' (无图标)"
-                        )
+                        logger.debug(f"存储项目 {project_id}，标题为: '{generated_name}' (无图标)")
                     db.commit()
 
             if project:
                 logger.debug(f"成功更新项目 {project_id}，包含清晰的标题和专用图标字段")
             else:
-                logger.error(
-                    f"在数据库中更新项目 {project_id} 失败。更新结果: {project}"
-                )
+                logger.error(f"在数据库中更新项目 {project_id} 失败。更新结果: {project}")
         else:
             logger.warning(f"没有生成名称，跳过项目 {project_id} 的数据库更新。")
 
     except Exception as e:
-        logger.error(
-            f"项目 {project_id} 的后台命名任务出错: {str(e)}\n{traceback.format_exc()}"
-        )
+        logger.error(f"项目 {project_id} 的后台命名任务出错: {str(e)}\n{traceback.format_exc()}")
     finally:
         logger.debug(f"完成项目的后台命名和图标选择任务: {project_id}")
