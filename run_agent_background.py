@@ -8,6 +8,7 @@ from typing import Any, Optional
 
 import dramatiq
 import structlog
+from claude_agent_sdk.types import PermissionMode
 from dramatiq.brokers.redis import RedisBroker
 from loguru import logger
 from tenacity import (
@@ -297,6 +298,7 @@ async def run_agent_background(
     instance_id: str,
     project_id: str,
     model_name: str = "glm-4.6",
+    permission_mode: PermissionMode | None = None,
     agent_id: Optional[str] = None,
     account_id: Optional[str] = None,
     request_id: Optional[str] = None,
@@ -326,9 +328,7 @@ async def run_agent_background(
         return
 
     timings["lock_acquisition"] = (time.time() - worker_start) * 1000 - timings["initialize"]
-    logger.info(
-        f"[TIMING] Worker 初始化: {timings['initialize']:.1f}ms | 获取锁: {timings['lock_acquisition']:.1f}ms"
-    )
+    logger.info(f"[TIMING] Worker 初始化: {timings['initialize']:.1f}ms | 获取锁: {timings['lock_acquisition']:.1f}ms")
     logger.info(f"后台启动 agent run：{agent_run_id}，线程：{thread_id}，实例：{instance_id}")
 
     logger.info("使用模型: {}", model_name)
@@ -402,6 +402,7 @@ async def run_agent_background(
             project_id=project_id,
             cancellation_event=cancellation_event,
             account_id=account_id,
+            permission_mode=permission_mode,
         )
 
         total_to_ready = (time.time() - worker_start) * 1000

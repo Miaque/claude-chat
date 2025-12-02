@@ -6,6 +6,7 @@ from datetime import datetime
 from typing import Any, Optional
 
 import structlog
+from claude_agent_sdk.types import PermissionMode
 from fastapi import (
     APIRouter,
     Depends,
@@ -53,7 +54,11 @@ async def _get_effective_model(model_name: Optional[str], account_id: str) -> st
 
 
 async def _create_agent_run_record(
-    thread_id: str, effective_model: str, actual_user_id: str, extra_metadata: Optional[dict[str, Any]] = None
+    thread_id: str,
+    effective_model: str,
+    actual_user_id: str,
+    permission_mode: PermissionMode | None = None,
+    extra_metadata: Optional[dict[str, Any]] = None,
 ) -> str:
     """
     在数据库中创建代理运行
@@ -64,6 +69,7 @@ async def _create_agent_run_record(
         agent_config: 代理配置字典
         effective_model: 使用的模型名称
         actual_user_id: 实际发起运行的用户ID
+        permission_mode: 权限模式
         extra_metadata: 额外的元数据
 
     返回:
@@ -79,6 +85,7 @@ async def _create_agent_run_record(
         **{
             "thread_id": thread_id,
             "status": "running",
+            "permission_mode": permission_mode,
             "started_at": current_time,
             "created_at": current_time,
             "updated_at": current_time,
@@ -116,6 +123,7 @@ async def _trigger_agent_background(
     thread_id: str,
     project_id: str,
     effective_model: str,
+    permission_mode: PermissionMode | None = None,
     agent_id: Optional[str] = None,
     account_id: Optional[str] = None,
 ):
@@ -139,6 +147,7 @@ async def _trigger_agent_background(
             instance_id=core_utils.instance_id,
             project_id=project_id,
             model_name=effective_model,
+            permission_mode=permission_mode,
             agent_id=agent_id,
             account_id=account_id,
             request_id=request_id,
@@ -156,6 +165,7 @@ async def start_agent_run(
     prompt: str,
     agent_id: Optional[str] = None,
     model_name: Optional[str] = None,
+    permission_mode: PermissionMode | None = None,
     thread_id: Optional[str] = None,
     project_id: Optional[str] = None,
     message_content: Optional[str] = None,  # 已预处理的内容（含文件引用）
@@ -183,6 +193,7 @@ async def start_agent_run(
         prompt：用户输入（新线程必填，已有线程可选）
         agent_id：指定 Agent（可选，默认按配置）
         model_name：指定模型（可选，默认按层级的配置）
+        permission_mode：权限模式(可选)
         thread_id：沿用已有线程（传 None 则新建）
         project_id：已有线程所属项目（若提供 thread_id 则必填）
         message_content：外部已预处理的消息内容（含文件引用）
@@ -289,12 +300,14 @@ async def start_agent_run(
         logger.debug(f"已为线程 {thread_id} 创建用户消息")
 
     async def create_agent_run():
-        return await _create_agent_run_record(thread_id, effective_model, account_id, metadata)
+        return await _create_agent_run_record(thread_id, effective_model, account_id, permission_mode, metadata)
 
     _, agent_run_id = await asyncio.gather(create_message(), create_agent_run())
 
     # 触发后台执行
-    await _trigger_agent_background(agent_run_id, thread_id, project_id, effective_model, agent_id, account_id)
+    await _trigger_agent_background(
+        agent_run_id, thread_id, project_id, effective_model, permission_mode, agent_id, account_id
+    )
 
     return {"thread_id": thread_id, "agent_run_id": agent_run_id, "project_id": project_id, "status": "running"}
 
@@ -309,6 +322,7 @@ async def unified_agent_start(
     thread_id: Optional[str] = Form(None),
     prompt: Optional[str] = Form(None),
     model_name: Optional[str] = Form(None),
+    permission_mode: Optional[PermissionMode] = Form(None),
     agent_id: Optional[str] = Form(None),
     files: list[UploadFile] = File(default=[]),
     user_id: str = Depends(verify_and_get_user_id_from_jwt),
@@ -485,6 +499,7 @@ async def unified_agent_start(
             prompt=prompt or "",
             agent_id=agent_id,
             model_name=model_name,
+            permission_mode=permission_mode,
             thread_id=thread_id,
             project_id=project_id,
             message_content=message_content,

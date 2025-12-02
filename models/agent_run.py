@@ -2,9 +2,10 @@ from datetime import datetime
 from typing import Literal, Optional
 from uuid import uuid4
 
+from claude_agent_sdk.types import PermissionMode
 from loguru import logger
 from pydantic import BaseModel, ConfigDict
-from sqlalchemy import TEXT, DateTime, func
+from sqlalchemy import TEXT, VARCHAR, DateTime, func
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -15,17 +16,14 @@ from models.types import StringUUID
 class AgentRun(Base):
     __tablename__ = "agent_runs"
 
-    id: Mapped[str] = mapped_column(
-        StringUUID, primary_key=True, index=True, default=lambda: str(uuid4())
-    )
+    id: Mapped[str] = mapped_column(StringUUID, primary_key=True, index=True, default=lambda: str(uuid4()))
     thread_id: Mapped[str] = mapped_column(StringUUID, nullable=False, index=True)
     status: Mapped[str] = mapped_column(TEXT, nullable=False, default="running")
+    permission_mode: Mapped[str] = mapped_column(VARCHAR(50))
     started_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
     completed_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
     error: Mapped[Optional[str]] = mapped_column(TEXT, nullable=True)
-    created_at: Mapped[datetime] = mapped_column(
-        DateTime, nullable=False, server_default=func.current_timestamp()
-    )
+    created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, server_default=func.current_timestamp())
     updated_at: Mapped[datetime] = mapped_column(
         DateTime,
         nullable=False,
@@ -40,6 +38,7 @@ class AgentRunModel(BaseModel):
     id: str
     thread_id: str
     status: Literal["running", "completed", "failed"]
+    permission_mode: PermissionMode | None = None
     started_at: datetime
     completed_at: Optional[datetime] = None
     error: Optional[str] = None
@@ -62,17 +61,11 @@ class AgentRunTable:
         try:
             with get_db() as db:
                 if fields:
-                    agent_run = (
-                        db.query(*fields).filter(AgentRun.id == agent_run_id).first()
-                    )
+                    agent_run = db.query(*fields).filter(AgentRun.id == agent_run_id).first()
                     return agent_run or None
                 else:
-                    agent_run = (
-                        db.query(AgentRun).filter(AgentRun.id == agent_run_id).first()
-                    )
-                    return (
-                        AgentRunModel.model_validate(agent_run) if agent_run else None
-                    )
+                    agent_run = db.query(AgentRun).filter(AgentRun.id == agent_run_id).first()
+                    return AgentRunModel.model_validate(agent_run) if agent_run else None
         except Exception:
             logger.exception("根据id => [{}]查询agent运行记录失败", agent_run_id)
             raise
@@ -96,37 +89,22 @@ class AgentRunTable:
         try:
             with get_db() as db:
                 if fields:
-                    agent_runs = (
-                        db.query(*fields).filter(AgentRun.status == "running").all()
-                    )
+                    agent_runs = db.query(*fields).filter(AgentRun.status == "running").all()
 
                     return agent_runs or None
                 else:
-                    agent_runs = (
-                        db.query(AgentRun).filter(AgentRun.status == "running").all()
-                    )
+                    agent_runs = db.query(AgentRun).filter(AgentRun.status == "running").all()
 
-                    return (
-                        [
-                            AgentRunModel.model_validate(agent_run)
-                            for agent_run in agent_runs
-                        ]
-                        if agent_runs
-                        else None
-                    )
+                    return [AgentRunModel.model_validate(agent_run) for agent_run in agent_runs] if agent_runs else None
         except Exception:
             logger.exception("获取正在运行的agent运行记录失败")
             raise
 
     @staticmethod
-    def update_status(
-        agent_run_id: str, status: str, error: Optional[str] = None
-    ) -> AgentRunModel | None:
+    def update_status(agent_run_id: str, status: str, error: Optional[str] = None) -> AgentRunModel | None:
         try:
             with get_db() as db:
-                agent_run = (
-                    db.query(AgentRun).filter(AgentRun.id == agent_run_id).first()
-                )
+                agent_run = db.query(AgentRun).filter(AgentRun.id == agent_run_id).first()
                 if agent_run:
                     agent_run.status = status
                     agent_run.completed_at = datetime.now()

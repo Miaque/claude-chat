@@ -31,7 +31,9 @@ async def make_llm_api_call(
     output_format: dict[str, Any] | None = None,
 ) -> dict[str, Any] | AsyncGenerator | None:
     """使用Claude SDK进行语言模型API调用。"""
-    logger.info(f"正在向 Claude Code 发起调用，模型: {model_name}，包含 {len(messages)} 条消息")
+    logger.info(
+        f"正在向 Claude Code 发起调用，模型: {model_name}，模式: {permission_mode}, 包含 {len(messages)} 条消息"
+    )
 
     options = ClaudeAgentOptions(
         system_prompt=SystemPromptPreset(

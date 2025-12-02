@@ -5,6 +5,7 @@ from collections.abc import AsyncGenerator
 from dataclasses import dataclass
 from typing import Any, Optional
 
+from claude_agent_sdk.types import PermissionMode
 from loguru import logger
 
 from core.error_processor import ErrorProcessor
@@ -23,6 +24,7 @@ class AgentConfig:
     model_name: str = "glm-4.6"
     agent_config: Optional[dict] = None
     account_id: Optional[str] = None
+    permission_mode: PermissionMode | None = None
 
 
 class PromptManager:
@@ -125,6 +127,7 @@ class AgentRunner:
                 thread_id=self.config.thread_id,
                 system_prompt=system_message,
                 stream=True,
+                permission_mode=self.config.permission_mode,
                 llm_model=self.config.model_name,
                 tool_choice="auto",
                 temporary_message=temporary_message,
@@ -196,6 +199,7 @@ async def run_agent(
     agent_config: Optional[dict] = None,
     cancellation_event: Optional[asyncio.Event] = None,
     account_id: Optional[str] = None,
+    permission_mode: PermissionMode | None = None,
 ):
     config = AgentConfig(
         thread_id=thread_id,
@@ -203,6 +207,7 @@ async def run_agent(
         model_name=model_name,
         agent_config=agent_config,
         account_id=account_id,
+        permission_mode=permission_mode,
     )
 
     runner = AgentRunner(config)

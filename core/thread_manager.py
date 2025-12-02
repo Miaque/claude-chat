@@ -4,6 +4,7 @@ from collections.abc import AsyncGenerator
 from datetime import datetime
 from typing import Any, Literal, Optional, Union, cast
 
+from claude_agent_sdk.types import PermissionMode
 from loguru import logger
 from sqlalchemy import select
 
@@ -166,6 +167,7 @@ class ThreadManager:
         thread_id: str,
         system_prompt: dict[str, Any],
         stream: bool = True,
+        permission_mode: PermissionMode | None = None,
         temporary_message: Optional[dict[str, Any]] = None,
         llm_model: str = "glm-4.6",
         processor_config: Optional[ProcessorConfig] = None,
@@ -192,7 +194,7 @@ class ThreadManager:
             tool_choice,
             config,
             stream,
-            # auto_continue_state,
+            permission_mode,
             temporary_message,
             latest_user_message_content,
             cancellation_event,
@@ -212,6 +214,7 @@ class ThreadManager:
         tool_choice: ToolChoice,
         config: ProcessorConfig,
         stream: bool,
+        permission_mode: PermissionMode | None = None,
         temporary_message: Optional[dict[str, Any]] = None,
         latest_user_message_content: Optional[str] = None,
         cancellation_event: Optional[asyncio.Event] = None,
@@ -244,6 +247,7 @@ class ThreadManager:
                     llm_model,
                     tools=openapi_tool_schemas,
                     stream=stream,
+                    permission_mode=permission_mode,
                     system_prompt=system_prompt.get("content"),
                     session_id=session_id,
                 )
