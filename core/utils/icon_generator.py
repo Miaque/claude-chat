@@ -1,16 +1,15 @@
 """
-Icon and color generation utilities for agents and projects.
+用于生成智能体和项目图标与颜色的工具。
 """
 
 import json
 import traceback
-from typing import Dict
 
 from loguru import logger
 
 from core.services.llm import make_llm_api_call
 
-# Lucide React icons (hardcoded for performance)
+# Lucide React 图标（硬编码以提高性能）
 RELEVANT_ICONS = [
     "accessibility",
     "activity",
@@ -678,20 +677,20 @@ RELEVANT_ICONS = [
 ]
 
 
-async def generate_icon_and_colors(name: str, description: str = "") -> Dict[str, str]:
+async def generate_icon_and_colors(name: str, description: str = "") -> dict[str, str]:
     """
-    Generate appropriate icon and color scheme for an agent or project.
+    生成适当的图标和颜色方案。
 
-    Args:
-        name: The name of the agent/project
-        description: Optional description for better context
+    参数:
+        name: 智能体/项目的名称
+        description: 可选的描述，用于提供更完整的上下文
 
-    Returns:
-        Dict with keys: icon_name, icon_color, icon_background
+    返回:
+        dict[str, str] 包含键: icon_name, icon_color, icon_background
     """
-    logger.debug(f"Generating icon and colors for: {name}")
+    logger.debug(f"正在为{name}生成图标和配色")
     try:
-        model_name = "openai/gpt-5-nano-2025-08-07"
+        model_name = "glm-4.6"
 
         frontend_colors = [
             "#000000",
@@ -737,81 +736,76 @@ Example response:
             {"role": "user", "content": user_message},
         ]
 
-        logger.debug(f"Calling LLM ({model_name}) for icon and color generation.")
+        logger.debug(f"正在调用 {model_name} 生成图标和配色。")
         response = await make_llm_api_call(
             messages=messages,
             model_name=model_name,
             stream=False,
+            system_prompt=system_prompt,
+            prompt=user_message,
+            output_format={
+                "type": "json_schema",
+                "schema": {
+                    "icon": {"type": "string", "enum": RELEVANT_ICONS},
+                    "background_color": {"type": "string", "enum": frontend_colors},
+                    "text_color": {"type": "string", "enum": frontend_colors},
+                },
+            },
         )
 
-        # Default fallback values
+        # 默认回退值
         result = {
             "icon_name": "bot",
             "icon_color": "#FFFFFF",
             "icon_background": "#6366F1",
         }
 
-        if (
-            response
-            and isinstance(response, dict)
-            and response.get("choices")
-            and response["choices"][0].get("message")
-        ):
-            raw_content = response["choices"][0]["message"].get("content", "").strip()
+        if response and isinstance(response, dict) and response.get("result"):
+            raw_content = response["result"].strip()
             try:
                 parsed_response = json.loads(raw_content)
 
                 if isinstance(parsed_response, dict):
-                    # Extract and validate icon
+                    # 提取并验证图标
                     icon = parsed_response.get("icon", "").strip()
                     if icon and icon in RELEVANT_ICONS:
                         result["icon_name"] = icon
-                        logger.debug(f"LLM selected icon: '{icon}'")
+                        logger.debug(f"已选定图标：'{icon}'")
                     else:
-                        logger.warning(
-                            f"LLM selected invalid icon '{icon}', using default 'bot'"
-                        )
+                        logger.warning(f"选中的图标'{icon}'无效，使用默认图标'bot'")
 
-                    # Extract and validate colors
+                    # 提取并验证颜色
                     bg_color = parsed_response.get("background_color", "").strip()
                     text_color = parsed_response.get("text_color", "").strip()
 
                     if bg_color in frontend_colors:
                         result["icon_background"] = bg_color
-                        logger.debug(f"LLM selected background color: '{bg_color}'")
+                        logger.debug(f"已选定背景色：'{bg_color}'")
                     else:
-                        logger.warning(
-                            f"LLM selected invalid background color '{bg_color}', using default"
-                        )
+                        logger.warning(f"选中的背景色'{bg_color}'无效，使用默认背景色")
 
                     if text_color in frontend_colors:
                         result["icon_color"] = text_color
-                        logger.debug(f"LLM selected text color: '{text_color}'")
+                        logger.debug(f"已选定文字颜色：'{text_color}'")
                     else:
-                        logger.warning(
-                            f"LLM selected invalid text color '{text_color}', using default"
-                        )
+                        logger.warning(f"选中的文字颜色'{text_color}'无效，使用默认文字颜色")
 
                 else:
-                    logger.warning(f"LLM returned non-dict JSON: {parsed_response}")
+                    logger.warning(f"返回非字典类型JSON: {parsed_response}")
 
             except json.JSONDecodeError as e:
-                logger.warning(
-                    f"Failed to parse LLM JSON response: {e}. Raw content: {raw_content}"
-                )
+                logger.warning(f"解析 JSON 响应失败：{e}。 原始内容：{raw_content}")
         else:
-            logger.warning(
-                f"Failed to get valid response from LLM for icon generation. Response: {response}"
-            )
+            logger.warning(f"未能获得有效的图标生成结果，返回内容：{response}")
 
         logger.debug(
-            f"Generated styling: icon={result['icon_name']}, bg={result['icon_background']}, color={result['icon_color']}"
+            f"已生成样式：图标={result['icon_name']}，背景={result['icon_background']}，颜色={result['icon_color']}"
         )
         return result
 
     except Exception as e:
-        logger.error(f"Error in icon generation: {str(e)}\n{traceback.format_exc()}")
-        # Return safe defaults on error (using Indigo theme)
+        logger.error(f"图标生成错误：{str(e)}\n{traceback.format_exc()}")
+        # 返回默认值
         return {
             "icon_name": "bot",
             "icon_color": "#FFFFFF",
