@@ -4,7 +4,7 @@ from collections.abc import AsyncGenerator
 from datetime import datetime
 from typing import Any, Literal, Optional, Union, cast
 
-from claude_agent_sdk.types import PermissionMode
+from claude_agent_sdk.types import McpServerConfig, PermissionMode
 from loguru import logger
 from sqlalchemy import select
 
@@ -171,9 +171,9 @@ class ThreadManager:
         temporary_message: Optional[dict[str, Any]] = None,
         llm_model: str = "glm-4.6",
         processor_config: Optional[ProcessorConfig] = None,
-        tool_choice: ToolChoice = "auto",
         latest_user_message_content: Optional[str] = None,
         cancellation_event: Optional[asyncio.Event] = None,
+        mcp_servers: Optional[dict[str, McpServerConfig]] = None,
     ) -> Union[dict[str, Any], AsyncGenerator]:
         """运行对话线程，集成LLM和工具执行。"""
         logger.debug(f"开始执行线程 {thread_id}，使用模型 {llm_model}")
@@ -191,13 +191,13 @@ class ThreadManager:
             thread_id,
             system_prompt,
             llm_model,
-            tool_choice,
             config,
             stream,
             permission_mode,
             temporary_message,
             latest_user_message_content,
             cancellation_event,
+            mcp_servers,
         )
 
         # 如果结果是错误字典，将其转换为生成器并产出错误
@@ -211,13 +211,13 @@ class ThreadManager:
         thread_id: str,
         system_prompt: dict[str, Any],
         llm_model: str,
-        tool_choice: ToolChoice,
         config: ProcessorConfig,
         stream: bool,
         permission_mode: PermissionMode | None = None,
         temporary_message: Optional[dict[str, Any]] = None,
         latest_user_message_content: Optional[str] = None,
         cancellation_event: Optional[asyncio.Event] = None,
+        mcp_servers: Optional[dict[str, McpServerConfig]] = None,
     ) -> Union[dict[str, Any], AsyncGenerator]:
         """执行单次LLM运行。"""
 
@@ -231,9 +231,6 @@ class ThreadManager:
             thread = Threads.get_by_id(thread_id, Thread.session_id)
             session_id = thread.session_id if thread else None
 
-            # 获取LLM调用的工具模式(在压缩之后)
-            openapi_tool_schemas = None
-
             prepared_messages = messages
 
             # 注意: 我们不在此处记录token计数，因为缓存块给出不准确的计数
@@ -245,7 +242,7 @@ class ThreadManager:
                 llm_response = await make_llm_api_call(
                     prepared_messages,
                     llm_model,
-                    tools=openapi_tool_schemas,
+                    mcp_servers=mcp_servers,
                     stream=stream,
                     permission_mode=permission_mode,
                     system_prompt=system_prompt.get("content"),

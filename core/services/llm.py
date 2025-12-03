@@ -3,7 +3,7 @@ from dataclasses import asdict
 from typing import Any, Optional, cast
 
 from claude_agent_sdk import ClaudeAgentOptions, ClaudeSDKClient
-from claude_agent_sdk.types import PermissionMode, ResultMessage, SystemPromptPreset
+from claude_agent_sdk.types import McpServerConfig, PermissionMode, ResultMessage, SystemPromptPreset
 from loguru import logger
 
 from core.error_processor import ErrorProcessor
@@ -22,6 +22,7 @@ class LLMError(Exception):
 async def make_llm_api_call(
     messages: list[dict[str, Any]],
     model_name: str,
+    mcp_servers: Optional[dict[str, McpServerConfig]] = None,
     tools: Optional[list[dict[str, Any]]] = None,
     stream: bool = True,  # 始终使用流式传输以获得更好的用户体验
     permission_mode: PermissionMode | None = None,
@@ -42,10 +43,11 @@ async def make_llm_api_call(
             append=system_prompt or "总是使用中文回复",
         ),
         include_partial_messages=True if stream else False,
-        allowed_tools=["WebFetch", "WebSearch"],
+        allowed_tools=["WebFetch", "WebSearch", "TodoWrite", "ExitPlanMode"],
         resume=session_id,
         permission_mode=permission_mode,
         output_format=output_format,
+        mcp_servers=mcp_servers or {},
     )
 
     if stream:

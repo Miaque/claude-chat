@@ -5,10 +5,11 @@ from collections.abc import AsyncGenerator
 from dataclasses import dataclass
 from typing import Any, Optional
 
-from claude_agent_sdk.types import PermissionMode
+from claude_agent_sdk.types import McpServerConfig, PermissionMode
 from loguru import logger
 
 from core.error_processor import ErrorProcessor
+from core.mcp.mcp_manager import MCPManager
 from core.prompts.prompt import get_system_prompt
 from core.response_processor import ProcessorConfig
 from core.thread_manager import ThreadManager
@@ -97,8 +98,17 @@ class AgentRunner:
         if not sandbox_info.get("id"):
             logger.debug(f"未找到项目 {self.config.project_id} 的sandbox；将在需要时延迟创建")
 
+    async def setup_mcp(self) -> Optional[dict[str, McpServerConfig]]:
+        if not self.config.agent_config:
+            return None
+
+        mcp_manager = MCPManager(self.thread_manager, self.account_id)
+        return await mcp_manager.get_mcp_servers(self.config.agent_config)
+
     async def run(self, cancellation_event: asyncio.Event | None) -> AsyncGenerator[dict[str, Any], None]:
         await self.setup()
+
+        mcp_servers = await self.setup_mcp()
 
         system_message = await PromptManager.build_system_prompt(
             self.config.model_name,
@@ -129,13 +139,13 @@ class AgentRunner:
                 stream=True,
                 permission_mode=self.config.permission_mode,
                 llm_model=self.config.model_name,
-                tool_choice="auto",
                 temporary_message=temporary_message,
                 latest_user_message_content=latest_user_message_content,
                 processor_config=ProcessorConfig(
                     execute_on_stream=True,
                 ),
                 cancellation_event=cancellation_event,
+                mcp_servers=mcp_servers,
             )
 
             try:
