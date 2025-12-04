@@ -81,11 +81,11 @@ class AgentRunner:
     async def setup(self):
         self.thread_manager = ThreadManager(agent_config=self.config.agent_config)
 
-        response = Threads.get_by_id(self.config.thread_id, Thread.account_id)
-        if not response:
+        thread = Threads.get_by_id(self.config.thread_id, Thread.account_id)
+        if not thread:
             raise ValueError(f"未找到线程 {self.config.thread_id}")
 
-        self.account_id = response.account_id
+        self.account_id = thread.account_id
 
         if not self.account_id:
             raise ValueError(f"线程 {self.config.thread_id} 没有关联的账户")

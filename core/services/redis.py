@@ -248,3 +248,13 @@ async def xrange(
     """
     redis_client = await get_client()
     return await redis_client.xrange(stream_key, start, end, count=count)
+
+
+async def incr(key: str):
+    redis_client = await get_client()
+    return await redis_client.incr(key)
+
+
+async def decr(key: str):
+    redis_client = await get_client()
+    return await redis_client.decr(key)

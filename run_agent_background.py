@@ -20,6 +20,7 @@ from tenacity import (
 )
 
 from configs import app_config
+from core.agent_loader import get_agent_loader
 from core.run import run_agent
 from core.services import redis
 from models.agent_run import AgentRun, AgentRuns
@@ -83,7 +84,7 @@ async def initialize():
     await redis.initialize_async()
 
     _initialized = True
-    logger.info(f"✅ 工作进程初始化成功，实例 ID: {instance_id}")
+    logger.info(f"工作进程初始化成功，实例 ID: {instance_id}")
 
 
 @dramatiq.actor
@@ -136,6 +137,26 @@ async def acquire_run_lock(agent_run_id: str, instance_id: str) -> bool:
                 return False
 
     return True
+
+
+async def load_agent_config(agent_id: Optional[str], account_id: Optional[str]) -> Optional[dict[str, Any]]:
+    if not agent_id:
+        return None
+
+    try:
+        loader = await get_agent_loader()
+
+        if account_id:
+            agent_data = await loader.load_agent(agent_id, account_id, load_config=True)
+            agent_config = agent_data.to_dict()
+        else:
+            agent_data = await loader.load_agent(agent_id, agent_id, load_config=True)
+            agent_config = agent_data.to_dict()
+
+        return agent_config
+    except Exception as e:
+        logger.warning(f"获取 agent_id {agent_id} 的配置失败：{e}，使用默认配置。")
+        return None
 
 
 async def send_completion_notification(
@@ -396,9 +417,12 @@ async def run_agent_background(
         stop_checker = asyncio.create_task(check_for_stop_signal_wrapper())
         await redis.set(redis_keys["instance_active"], "running", ex=redis.REDIS_KEY_TTL)
 
+        agent_config = await load_agent_config(agent_id, account_id)
+
         agent_gen = run_agent(
             thread_id=thread_id,
             model_name=model_name,
+            agent_config=agent_config,
             project_id=project_id,
             cancellation_event=cancellation_event,
             account_id=account_id,

@@ -33,7 +33,7 @@ class Agent(Base):
     icon_color: Mapped[str] = mapped_column(VARCHAR(7), nullable=False, default="#000000")
     icon_background: Mapped[str] = mapped_column(VARCHAR(7), nullable=False, default="#F3F4F6")
 
-    __table_args__ = UniqueConstraint(account_id, is_default, name="uix_agents_account_id_is_default")
+    __table_args__ = (UniqueConstraint(account_id, is_default, name="uix_agents_account_id_is_default"),)
 
 
 class AgentModel(BaseModel):
@@ -73,6 +73,33 @@ class AgentTable:
                     return AgentModel.model_validate(agent) if agent else None
         except Exception:
             logger.exception("根据id => [{}]查询agent失败", agent_id)
+            raise
+
+    @staticmethod
+    def get_global_default_agent_id(account_id: str) -> str | None:
+        try:
+            with get_db() as db:
+                agent = (
+                    db.query(Agent.agent_id)
+                    .filter(Agent.account_id == account_id)
+                    .filter(Agent.meta["is_global_default"].as_boolean() == True)
+                    .first()
+                )
+                return agent.agent_id if agent else None
+        except Exception:
+            logger.exception("根据account_id => [{}]查询全局默认智能体失败", account_id)
+            raise
+
+    @staticmethod
+    def insert(agent: Agent) -> AgentModel:
+        try:
+            with get_db() as db:
+                db.add(agent)
+                db.commit()
+                db.refresh(agent)
+                return AgentModel.model_validate(agent)
+        except Exception:
+            logger.exception("插入智能体失败")
             raise
 
 

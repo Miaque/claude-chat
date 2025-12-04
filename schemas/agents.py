@@ -10,11 +10,7 @@ class AgentVersionResponse(BaseModel):
     agent_id: str
     version_number: int
     version_name: str
-    system_prompt: str
-    model: Optional[str] = None
     configured_mcps: list[dict[str, Any]]
-    custom_mcps: list[dict[str, Any]]
-    agentpress_tools: dict[str, Any]
     is_active: bool
     created_at: str
     updated_at: str
@@ -27,11 +23,7 @@ class AgentResponse(BaseModel):
     agent_id: str
     name: str
     description: Optional[str] = None
-    system_prompt: Optional[str] = None  # 列表操作可选，未加载配置时
-    model: Optional[str] = None
     configured_mcps: list[dict[str, Any]]
-    custom_mcps: list[dict[str, Any]]
-    agentpress_tools: dict[str, Any]
     is_default: bool
     is_public: Optional[bool] = False
     tags: Optional[list[str]] = []

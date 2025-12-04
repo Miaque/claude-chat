@@ -20,14 +20,17 @@ from fastapi.responses import StreamingResponse
 from loguru import logger
 
 import core_utils
+from core.agent_loader import get_agent_loader
 from core.services import redis
 from core.services.db import get_db
 from core.utils.auth_utils import (
     get_user_id_from_stream_auth,
     verify_and_get_user_id_from_jwt,
 )
+from core.utils.init_agent import ensure_agent_initialized
 from core.utils.project_helpers import generate_and_update_project_name
 from core.utils.run_management import stop_agent_run_with_helpers as stop_agent_run
+from models.agent import Agents
 from models.agent_run import AgentRun, AgentRuns
 from models.message import Message, Messages
 from models.project import Project, Projects
@@ -47,6 +50,30 @@ async def _get_agent_run_with_access_check(agent_run_id: str, user_id: str):
         raise HTTPException(status_code=404, detail="未找到代理运行记录")
 
     return agent_run.model_dump(mode="json")
+
+
+async def _load_agent_config(agent_id: Optional[str], account_id: str, user_id: str, is_new_thread: bool = False):
+    loader = await get_agent_loader()
+
+    agent_data = None
+
+    logger.debug("加载默认智能体")
+
+    if is_new_thread:
+        await ensure_agent_initialized(account_id)
+
+    default_agent_id = Agents.get_global_default_agent_id(account_id)
+
+    if default_agent_id:
+        agent_data = await loader.load_agent(default_agent_id, user_id, load_config=True)
+        logger.debug(f"使用默认 Agent：{agent_data.name}（{agent_data.agent_id}）版本 {agent_data.version_name}")
+
+    agent_config = agent_data.to_dict() if agent_data else None
+
+    if agent_config:
+        logger.debug(f"本次运行使用 Agent {agent_config['agent_id']}")
+
+    return agent_config
 
 
 async def _get_effective_model(model_name: Optional[str], account_id: str) -> str:
@@ -207,6 +234,13 @@ async def start_agent_run(
 
     # 如果传了 message_content 就用它，否则用 prompt
     final_message_content = message_content or prompt
+
+    async def load_config():
+        return await _load_agent_config(agent_id, account_id, account_id, is_new_thread=is_new_thread)
+
+    agent_config = await load_config()
+    if not agent_id and agent_config:
+        agent_id = agent_config.get("agent_id")
 
     # 获取有效模型
     effective_model = await _get_effective_model(model_name, account_id)
